@@ -1,0 +1,59 @@
+/* Tailwind for the React islands only. Built to dist/renderer/islands.css.
+   No global preflight: the rest of Opscode keeps its own styles; islands get a scoped reset. */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+@import "tw-shimmer";
+
+/* Only scan the island sources. */
+@source "./";
+
+/* Opscode's theme: html[data-theme="dark"|"light"], or the OS when unset. */
+@custom-variant dark {
+  &:where([data-theme="dark"], [data-theme="dark"] *) { @slot; }
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme]), :root:not([data-theme]) *) { @slot; }
+  }
+}
+
+/* shadcn token names -> Opscode's HSL tokens (defined in renderer/styles.css). */
+@theme inline {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* A scoped version of Tailwind's preflight, for island content only. */
+@layer base {
+  .aui-island, .aui-island *, .aui-island ::before, .aui-island ::after { box-sizing: border-box; border: 0 solid; margin: 0; padding: 0; }
+  .aui-island { font-family: var(--font-sans); color: hsl(var(--foreground)); line-height: 1.5; -webkit-font-smoothing: antialiased; }
+  .aui-island button, .aui-island input, .aui-island textarea { font: inherit; color: inherit; background: transparent; }
+  .aui-island button:not(:disabled) { cursor: pointer; }
+  .aui-island img, .aui-island svg { display: block; max-width: 100%; }
+  /* Element lists have no markers; markdown inside replies (.op-md) keeps its bullets. */
+  .aui-island :where(ol, ul):not(.op-md *) { list-style: none; }
+  .aui-island * { border-color: hsl(var(--border)); }
+  /* Dialogs (lightbox) render in a portal at the end of body: same reset. */
+  [data-slot="dialog-overlay"], [data-slot="dialog-content"], [data-slot="dialog-content"] * { box-sizing: border-box; border: 0 solid; border-color: hsl(var(--border)); }
+}

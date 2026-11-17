@@ -1,0 +1,82 @@
+[
+  {
+    "id": "engineer",
+    "label": "Engineer",
+    "group": "People"
+  },
+  {
+    "id": "hacker",
+    "label": "Hacker",
+    "group": "People"
+  },
+  {
+    "id": "wizard",
+    "label": "Sysadmin",
+    "group": "People"
+  },
+  {
+    "id": "robot",
+    "label": "Bot",
+    "group": "People"
+  },
+  {
+    "id": "fox",
+    "label": "Fox",
+    "group": "Animals"
+  },
+  {
+    "id": "cat",
+    "label": "Cat",
+    "group": "Animals"
+  },
+  {
+    "id": "penguin",
+    "label": "Penguin",
+    "group": "Animals"
+  },
+  {
+    "id": "octopus",
+    "label": "Octo",
+    "group": "Animals"
+  },
+  {
+    "id": "raccoon",
+    "label": "Raccoon",
+    "group": "Animals"
+  },
+  {
+    "id": "frog",
+    "label": "Frog",
+    "group": "Animals"
+  },
+  {
+    "id": "axolotl",
+    "label": "Axolotl",
+    "group": "Animals"
+  },
+  {
+    "id": "crab",
+    "label": "Crab",
+    "group": "Animals"
+  },
+  {
+    "id": "panda",
+    "label": "Panda",
+    "group": "Animals"
+  },
+  {
+    "id": "capybara",
+    "label": "Capy",
+    "group": "Animals"
+  },
+  {
+    "id": "duck",
+    "label": "Duck",
+    "group": "Animals"
+  },
+  {
+    "id": "hedgehog",
+    "label": "Hedgehog",
+    "group": "Animals"
+  }
+]

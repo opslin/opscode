@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#FFB15C"/>
+      <stop offset="0.5" stop-color="#FF7A2F"/>
+      <stop offset="1" stop-color="#E04E14"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.3" cy="0.15" r="0.75">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="fg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#FFF4E6"/>
+    </linearGradient>
+  </defs>
+  <rect width="24" height="24" rx="5.4" fill="url(#bg)"/>
+  <rect width="24" height="24" rx="5.4" fill="url(#glow)"/>
+  <rect x="0.25" y="0.25" width="23.5" height="23.5" rx="5.15" fill="none" stroke="#FFFFFF" stroke-opacity="0.28" stroke-width="0.5"/>
+  <g fill="#3A1606" fill-opacity="0.18" shape-rendering="crispEdges"><rect x="7.0" y="7.5" width="2" height="1"/><rect x="7.0" y="8.5" width="3" height="1"/><rect x="8.0" y="9.5" width="3" height="1"/><rect x="9.0" y="10.5" width="3" height="1"/><rect x="10.0" y="11.5" width="3" height="1"/><rect x="10.0" y="12.5" width="3" height="1"/><rect x="9.0" y="13.5" width="3" height="1"/><rect x="8.0" y="14.5" width="3" height="1"/><rect x="7.0" y="15.5" width="3" height="1"/><rect x="13.0" y="15.5" width="6" height="1"/><rect x="7.0" y="16.5" width="2" height="1"/><rect x="13.0" y="16.5" width="6" height="1"/></g>
+  <g fill="url(#fg)" shape-rendering="crispEdges"><rect x="7" y="7" width="2" height="1"/><rect x="7" y="8" width="3" height="1"/><rect x="8" y="9" width="3" height="1"/><rect x="9" y="10" width="3" height="1"/><rect x="10" y="11" width="3" height="1"/><rect x="10" y="12" width="3" height="1"/><rect x="9" y="13" width="3" height="1"/><rect x="8" y="14" width="3" height="1"/><rect x="7" y="15" width="3" height="1"/><rect x="13" y="15" width="6" height="1"/><rect x="7" y="16" width="2" height="1"/><rect x="13" y="16" width="6" height="1"/></g>
+</svg>

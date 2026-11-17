@@ -1,0 +1,28 @@
+# One line-ending rule for every computer (Mac, Windows): LF in the repository and in the working copy.
+# (Scripts with a #! line, such as the fake engines in scripts/lib, break on Windows if they get CRLF.)
+* text=auto eol=lf
+
+# Windows-only files that need CRLF
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Binary files: never diffed or converted
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.icns binary
+*.wav binary
+*.m4a binary
+*.onnx binary
+*.dylib binary
+*.node binary
+*.dll binary
+*.woff binary
+*.woff2 binary
+
+# Generated files: collapsed in GitHub's diff view
+docs/prompts/*.md linguist-generated=true
+package-lock.json linguist-generated=true

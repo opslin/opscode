@@ -1,0 +1,57 @@
+{
+  "name": "opscode",
+  "version": "0.0.1",
+  "private": true,
+  "license": "UNLICENSED",
+  "description": "Opscode: a desktop coding-agent app for macOS and Windows (chat, voice mode, several agents at once).",
+  "productName": "Opscode",
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "dist/main/index.js",
+  "scripts": {
+    "postinstall": "node scripts/ensure-native.mjs",
+    "build": "node scripts/ensure-native.mjs && tsc -p tsconfig.json && npm run build:preload && node scripts/copy-renderer.mjs && node scripts/build-islands.mjs && node scripts/build-native.mjs",
+    "build:preload": "esbuild src/preload/index.ts --bundle --platform=node --format=cjs --target=node20 --external:electron --outfile=dist/preload/index.js --sourcemap",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "npm run build && electron .",
+    "dev": "npm run start",
+    "test:runtime": "npm run build && node scripts/test-runtime.mjs && node scripts/test-phase3.mjs && node scripts/test-phase5.mjs && node scripts/test-phase6.mjs && node scripts/test-phase7.mjs && node scripts/test-phase8.mjs && node scripts/test-phase9.mjs && node scripts/test-phase10.mjs && node scripts/test-phase11.mjs && node scripts/test-phase12.mjs && node scripts/test-phase13.mjs && node scripts/test-phase14.mjs && node scripts/test-phase15.mjs && node scripts/test-phase16.mjs && node scripts/test-phase17.mjs && node scripts/test-phase18.mjs && node scripts/test-phase19.mjs && node scripts/test-phase20.mjs && node scripts/test-phase21.mjs && node scripts/test-phase22.mjs && node scripts/test-phase23.mjs && node scripts/test-phase24.mjs && node scripts/test-phase25.mjs && node scripts/test-phase26.mjs && node scripts/test-phase27.mjs && node scripts/test-phase28.mjs && node scripts/test-phase29.mjs && node scripts/test-phase30.mjs && node scripts/test-phase31.mjs && node scripts/test-phase32.mjs && node scripts/test-phase33.mjs && node scripts/test-phase34.mjs && node scripts/test-phase35.mjs && node scripts/test-phase36.mjs && node scripts/test-phase37.mjs && node scripts/test-phase38.mjs && node scripts/test-phase39.mjs && node scripts/test-phase40.mjs && node scripts/test-phase41.mjs && node scripts/test-phase42.mjs && node scripts/test-phase43.mjs && node scripts/test-phase44.mjs && node scripts/test-phase45.mjs && node scripts/test-phase46.mjs && node scripts/test-phase47.mjs",
+    "test": "npm run test:runtime",
+    "smoke": "npm run build && node scripts/smoke.mjs",
+    "package": "node scripts/package-mac.mjs --no-install",
+    "install-app": "node scripts/package-mac.mjs",
+    "package:win": "node scripts/package-win.mjs",
+    "prompts:export": "node scripts/export-prompts.mjs",
+    "prompts:check": "node scripts/export-prompts.mjs --check"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "node-pty": "1.1.0",
+    "sherpa-onnx-node": "2.0.1",
+    "ws": "^8.18.0",
+    "yaml": "^2.8.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.3.5",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/ws": "^8.5.13",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.24.2",
+    "lucide-react": "^1.73.0",
+    "radix-ui": "^1.8.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "resedit": "^3.1.1",
+    "tailwind-merge": "^3.7.0",
+    "tailwindcss": "^4.3.5",
+    "tw-shimmer": "^0.4.14",
+    "typescript": "^5.6.3"
+  }
+}

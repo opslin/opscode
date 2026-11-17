@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ninja Mode Card</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&display=swap" rel="stylesheet">
+<style>
+/* Opscode mode card: Ninja. Preview page; the card itself is the .mode-card element. */
+:root {
+  --bg: #0e0f12;
+  --card: #14161c;
+  --fg: #eef0f4;
+  --muted: #9aa1ad;
+  --subtle: #6b7280;
+  --line: #262a33;
+  /* Ninja palette: night indigo, steel blue, scarf red, ember orange */
+  --night: #0b1020;
+  --indigo: #2a3a7a;
+  --blue: #4f7cff;
+  --ice: #9db4ff;
+  --red: #e5484d;
+  --ember: #ff8a3d;
+  --ease-snap: cubic-bezier(0.23, 1, 0.32, 1);
+  --pixel: "Silkscreen", ui-monospace, monospace;
+}
+* { box-sizing: border-box; margin: 0; }
+html, body { height: 100%; }
+body {
+  display: grid; place-items: center; min-height: 100vh; padding: 32px 16px;
+  background: radial-gradient(1200px 600px at 50% -10%, #1a2140 0%, transparent 60%), var(--bg);
+  font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+  color: var(--fg);
+}
+.stage { display: flex; flex-direction: column; align-items: center; gap: 18px; perspective: 1100px; }
+.hint { font-size: 12px; color: var(--subtle); }
+
+/* ---- the card ---- */
+.mode-card {
+  --rx: 0deg; --ry: 0deg; --gx: 50%; --gy: 0%;
+  position: relative; width: min(340px, calc(100vw - 32px)); border-radius: 22px; padding: 2px;
+  transform: rotateX(var(--rx)) rotateY(var(--ry)); transform-style: preserve-3d;
+  transition: transform 0.5s var(--ease-snap), box-shadow 0.4s;
+  box-shadow: 0 30px 60px -20px rgba(79, 124, 255, 0.35), 0 12px 30px -10px rgba(229, 72, 77, 0.25);
+  animation: card-in 0.7s var(--ease-snap) backwards;
+}
+.mode-card.tilting { transition: transform 0.08s linear, box-shadow 0.4s; }
+@keyframes card-in { from { opacity: 0; transform: translateY(24px) scale(0.96); } }
+/* Spinning gradient rim: blue -> indigo -> red -> ember -> blue */
+.mode-card::before {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 2px;
+  background: conic-gradient(from var(--spin, 0deg), var(--blue), var(--indigo), var(--red), var(--ember), var(--blue));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude;
+  animation: spin 6s linear infinite;
+}
+@property --spin { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+@keyframes spin { to { --spin: 360deg; } }
+.inner { position: relative; overflow: hidden; border-radius: 20px; background: var(--card); }
+/* Glare that follows the pointer */
+.inner::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 5;
+  background: radial-gradient(260px 200px at var(--gx) var(--gy), rgba(255,255,255,0.10), transparent 60%);
+  opacity: 0; transition: opacity 0.3s;
+}
+.mode-card:hover .inner::after { opacity: 1; }
+
+/* Art */
+.art { position: relative; height: 216px; background: var(--night); }
+.art canvas { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; }
+.badge {
+  position: absolute; top: 12px; left: 12px; z-index: 2; display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 8px; border-radius: 999px; background: rgba(11, 16, 32, 0.7); border: 1px solid rgba(157, 180, 255, 0.25);
+  font: 700 10px var(--pixel); letter-spacing: 0.08em; color: var(--ice); backdrop-filter: blur(4px);
+}
+.badge i { width: 6px; height: 6px; background: var(--red); box-shadow: 0 0 8px var(--red); animation: blink 1.6s steps(2) infinite; }
+@keyframes blink { 50% { opacity: 0.25; } }
+.rank {
+  position: absolute; top: 12px; right: 12px; z-index: 2; padding: 4px 8px; border-radius: 6px;
+  font: 700 10px var(--pixel); color: #fff; background: linear-gradient(135deg, var(--red), var(--ember));
+  box-shadow: 0 4px 14px rgba(229, 72, 77, 0.45);
+}
+
+/* Title */
+.head { padding: 14px 18px 4px; }
+.title { display: flex; align-items: baseline; gap: 10px; }
+.title h2 {
+  font: 700 26px/1 var(--pixel); letter-spacing: 0.02em;
+  background: linear-gradient(90deg, var(--ice), #fff 40%, var(--ice) 60%, var(--blue)); background-size: 200% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent; animation: sheen 4s linear infinite;
+}
+@keyframes sheen { to { background-position: -200% 0; } }
+.title .kanji { font-size: 14px; color: var(--red); opacity: 0.9; }
+.tag { margin-top: 6px; font-size: 13px; color: var(--muted); }
+
+/* Stats: segmented pixel bars */
+.stats { display: grid; gap: 8px; padding: 12px 18px 4px; }
+.stat { display: grid; grid-template-columns: 74px 1fr 18px; align-items: center; gap: 10px; }
+.stat-label { font: 10px var(--pixel); letter-spacing: 0.06em; color: var(--muted); text-transform: uppercase; }
+.bar { display: grid; grid-template-columns: repeat(10, 1fr); gap: 3px; height: 10px; }
+.bar i { border-radius: 1.5px; background: rgba(255,255,255,0.06); }
+.bar i.on { background: var(--c); box-shadow: 0 0 6px color-mix(in srgb, var(--c) 60%, transparent); animation: seg 0.45s var(--ease-snap) backwards, wave 2.8s ease-in-out infinite; animation-delay: calc(var(--i) * 45ms + 300ms), calc(var(--i) * 90ms); }
+@keyframes seg { from { opacity: 0; transform: scaleY(0.2); } }
+@keyframes wave { 0%, 100% { transform: translateY(0); filter: none; } 20% { transform: translateY(-2px); filter: brightness(1.4); } 40% { transform: translateY(0); filter: none; } }
+.stat-n { font: 10px var(--pixel); color: var(--fg); text-align: right; }
+
+/* Specs: what the mode actually sets in Opscode */
+.specs { margin: 12px 18px 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.spec { display: flex; align-items: center; gap: 10px; padding: 8px 12px; font-size: 12.5px; animation: row-in 0.5s var(--ease-snap) backwards; animation-delay: calc(var(--i) * 60ms + 350ms); }
+.spec + .spec { border-top: 1px solid var(--line); }
+@keyframes row-in { from { opacity: 0; transform: translateX(-8px); } }
+.spec svg { width: 15px; height: 15px; flex-shrink: 0; color: var(--ice); }
+.spec .k { color: var(--muted); }
+.spec .v { margin-left: auto; text-align: right; color: var(--fg); }
+.spec .v b { font-weight: 600; }
+.spark { color: #D97757; }
+.pill { padding: 1px 6px; border-radius: 5px; font-size: 11px; background: rgba(79,124,255,0.15); color: var(--ice); }
+.pill.red { background: rgba(229,72,77,0.15); color: #ff8b8f; }
+
+/* Choose */
+.foot { display: flex; align-items: center; gap: 10px; padding: 14px 18px 18px; }
+.choose {
+  position: relative; overflow: hidden; flex: 1; height: 40px; border: 0; border-radius: 10px; cursor: pointer;
+  font: 700 12px var(--pixel); letter-spacing: 0.08em; color: #fff;
+  background: linear-gradient(135deg, var(--indigo), var(--blue) 55%, var(--red));
+  box-shadow: 0 8px 20px -6px rgba(79,124,255,0.6), inset 0 1px 0 rgba(255,255,255,0.2);
+  transition: transform 0.15s var(--ease-snap), filter 0.2s;
+}
+.choose:hover { filter: brightness(1.12); }
+.choose:active { transform: scale(0.97); }
+.choose::after { content: ""; position: absolute; top: 0; bottom: 0; width: 40%; left: -60%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.35), transparent); transform: skewX(-20deg); animation: shine 3.2s ease-in-out infinite 1.2s; }
+@keyframes shine { 60%, 100% { left: 130%; } }
+.choose:focus-visible { outline: 2px solid var(--ice); outline-offset: 3px; }
+.key { font: 10px var(--pixel); color: var(--subtle); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }
+.chosen .choose { background: linear-gradient(135deg, #1f7a4a, #2bb673); }
+
+@media (prefers-reduced-motion: reduce) {
+  .mode-card, .mode-card::before, .badge i, .title h2, .bar i.on, .spec, .choose::after { animation: none !important; }
+}
+</style>
+</head>
+<body>
+<div class="stage">
+  <article class="mode-card" id="card" aria-label="Ninja mode">
+    <div class="inner">
+      <div class="art">
+        <canvas id="art" aria-hidden="true"></canvas>
+        <span class="badge"><i></i>CODING MODE</span>
+        <span class="rank">SPEED</span>
+      </div>
+      <div class="head">
+        <div class="title"><h2>NINJA</h2><span class="kanji">忍</span></div>
+        <p class="tag">Fast, quiet, precise. Small sharp changes with the fewest tokens.</p>
+      </div>
+      <div class="stats" id="stats"></div>
+      <div class="specs" id="specs"></div>
+      <div class="foot">
+        <button class="choose" id="choose" type="button">CHOOSE NINJA</button>
+        <span class="key">⌘3</span>
+      </div>
+    </div>
+  </article>
+  <p class="hint">Move the pointer over the card · Click Choose</p>
+</div>
+
+<script>
+// ---- stats and specs ------------------------------------------------------------------------
+const STATS = [
+  { label: "Speed", n: 10, c: "#4f7cff" },
+  { label: "Stealth", n: 9, c: "#9db4ff", title: "How few tokens it spends" },
+  { label: "Power", n: 5, c: "#ff8a3d" },
+  { label: "Autonomy", n: 7, c: "#e5484d" },
+];
+const ICON = {
+  model: '<path d="M12 2v20M2 12h20M5 5l14 14M19 5 5 19" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>',
+  effort: '<path d="M13 2 4 14h7l-1 8 9-12h-7z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>',
+  shield: '<path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>',
+  leaf: '<path d="M4 20c8 0 16-6 16-16-10 0-16 8-16 16zM4 20l8-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
+  reply: '<path d="M8 6 2 12l6 6M16 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
+  coin: '<circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7v10M9.5 9.5h4a1.5 1.5 0 0 1 0 3h-3a1.5 1.5 0 0 0 0 3h4" fill="none" stroke="currentColor" stroke-width="1.6"/>',
+};
+const SPECS = [
+  { icon: "model", k: "Model", v: '<span class="spark">✱</span> Claude <b>Sonnet 5.5</b>' },
+  { icon: "effort", k: "Effort", v: '<span class="pill">Low</span>' },
+  { icon: "shield", k: "Permissions", v: "Auto edits" },
+  { icon: "leaf", k: "Context", v: 'Lean <span class="pill red">no MCP</span>' },
+  { icon: "reply", k: "Replies", v: "Short, code first" },
+  { icon: "coin", k: "Cost", v: "≈ $0.35 a task · <b>$$</b>" },
+];
+const stats = document.getElementById("stats");
+for (const s of STATS) {
+  const bar = Array.from({ length: 10 }, (_, i) => `<i class="${i < s.n ? "on" : ""}" style="--i:${i}"></i>`).join("");
+  stats.insertAdjacentHTML("beforeend", `<div class="stat" title="${s.title ?? s.label}"><span class="stat-label">${s.label}</span><span class="bar" style="--c:${s.c}" role="meter" aria-label="${s.label}" aria-valuenow="${s.n}" aria-valuemin="0" aria-valuemax="10">${bar}</span><span class="stat-n">${s.n}</span></div>`);
+}
+const specs = document.getElementById("specs");
+SPECS.forEach((s, i) => specs.insertAdjacentHTML("beforeend", `<div class="spec" style="--i:${i}"><svg viewBox="0 0 24 24" aria-hidden="true">${ICON[s.icon]}</svg><span class="k">${s.k}</span><span class="v">${s.v}</span></div>`));
+
+// ---- tilt + glare -----------------------------------------------------------------------------
+const card = document.getElementById("card");
+const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+if (!reduced) {
+  card.addEventListener("pointermove", (e) => {
+    const r = card.getBoundingClientRect();
+    const x = (e.clientX - r.left) / r.width;
+    const y = (e.clientY - r.top) / r.height;
+    card.classList.add("tilting");
+    card.style.setProperty("--ry", `${(x - 0.5) * 14}deg`);
+    card.style.setProperty("--rx", `${(0.5 - y) * 12}deg`);
+    card.style.setProperty("--gx", `${x * 100}%`);
+    card.style.setProperty("--gy", `${y * 100}%`);
+  });
+  card.addEventListener("pointerleave", () => { card.classList.remove("tilting"); card.style.setProperty("--rx", "0deg"); card.style.setProperty("--ry", "0deg"); });
+}
+document.getElementById("choose").addEventListener("click", (e) => {
+  const chosen = card.classList.toggle("chosen");
+  e.currentTarget.textContent = chosen ? "NINJA CHOSEN ✓" : "CHOOSE NINJA";
+  if (chosen) vanish();
+});
+
+// ---- pixel art scene --------------------------------------------------------------------------
+// Everything is drawn on a 5px pixel grid: night sky, twinkling stars, moon, the ninja
+// (an original 16x17 sprite) whose scarf waves, shurikens he throws, smoke when he
+// vanishes and reappears, and a band of pixel fog waving along the bottom.
+const cv = document.getElementById("art");
+const g = cv.getContext("2d");
+const P = 6;
+let W = 0, H = 0, COLS = 0, ROWS = 0;
+function size() {
+  const r = cv.getBoundingClientRect();
+  const dpr = Math.min(2, devicePixelRatio || 1);
+  cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr);
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  W = r.width; H = r.height; COLS = Math.ceil(W / P); ROWS = Math.ceil(H / P);
+}
+const px = (x, y, c, a = 1) => { g.globalAlpha = a; g.fillStyle = c; g.fillRect(Math.round(x) * P, Math.round(y) * P, P - 0.6, P - 0.6); };
+
+const PAL = { k: "#070a14", K: "#1c2440", D: "#141a30", S: "#f1c9a0", W: "#ffffff", R: "#e5484d", r: "#a32d33", B: "#4f7cff", G: "#c9d1d9", g: "#8b95a7", H: "#6b3f2a" };
+const NINJA = [
+  "......kkkkk.....",
+  ".....kKKKKKk..G.",
+  "....kKKKKKKKkGg.",
+  "....kRRRRRRRRk..",
+  "....kSWSSSWSk...",
+  "....kKKKKKKKk...",
+  ".....kKKKKKk....",
+  "...kkKKKKKKKkk..",
+  "..kKKDBBBBBDKKk.",
+  "..kKKkKKKKKkKKk.",
+  "..kSkkKKKKKkkSk.",
+  "...k.kKKKKKk.k..",
+  ".....kKKkKKk....",
+  ".....kKk.kKk....",
+  ".....kKk.kKk....",
+  "....kkKk.kKkk...",
+  "....kkkk.kkkk...",
+];
+const stars = Array.from({ length: 34 }, () => ({ x: Math.random(), y: Math.random() * 0.55, p: Math.random() * 6.28, s: Math.random() < 0.15 }));
+const shurikens = [];
+const smoke = [];
+let ninja = { x: 0.24, alpha: 1 };
+let lastThrow = 0, lastVanish = 0, t0 = performance.now();
+
+function moon(cx, cy) {
+  for (let y = -6; y <= 6; y++) for (let x = -6; x <= 6; x++) {
+    const d = Math.hypot(x, y);
+    if (d <= 6.2) px(cx + x, cy + y, d > 5.2 ? "#cdd6ff" : "#eef2ff", d > 5.2 ? 0.75 : 0.95);
+  }
+  for (const [x, y] of [[-2, -1], [2, 2], [1, -3], [-3, 3]]) px(cx + x, cy + y, "#c3ccf0", 0.9);
+  // soft glow
+  const gl = g.createRadialGradient((cx + 0.5) * P, (cy + 0.5) * P, 6 * P, (cx + 0.5) * P, (cy + 0.5) * P, 16 * P);
+  gl.addColorStop(0, "rgba(157,180,255,0.18)"); gl.addColorStop(1, "rgba(157,180,255,0)");
+  g.globalAlpha = 1; g.fillStyle = gl; g.fillRect(0, 0, W, H);
+}
+
+function drawNinja(ox, oy, t, alpha) {
+  if (alpha <= 0) return;
+  const bob = Math.sin(t * 2.2) > 0 ? 0 : 1; // breathing, one pixel
+  NINJA.forEach((row, y) => [...row].forEach((ch, x) => { if (ch !== ".") px(ox + x, oy + y + bob, PAL[ch], alpha); }));
+  // Scarf tails trail from the headband and wave in the wind.
+  for (let i = 0; i < 9; i++) {
+    const wy = Math.round(Math.sin(t * 7 - i * 0.7) * (0.4 + i * 0.22));
+    px(ox + 13 + i, oy + 3 + bob + wy + Math.floor(i / 4), i % 3 === 2 ? PAL.r : PAL.R, alpha * (1 - i * 0.06));
+  }
+}
+
+function shuriken(s, t) {
+  const spin = Math.floor(t * 18) % 2;
+  const pts = spin ? [[0, 0], [0, -1], [0, 1], [-1, 0], [1, 0], [0, -2], [0, 2], [-2, 0], [2, 0]] : [[0, 0], [-1, -1], [1, 1], [-1, 1], [1, -1], [-2, -2], [2, 2], [-2, 2], [2, -2]];
+  for (const [x, y] of pts) px(s.x + x, s.y + y, x === 0 && y === 0 ? "#6b7280" : "#d6dde8");
+  // trail
+  for (let i = 1; i < 6; i++) px(s.x - i * 1.6, s.y, "#9db4ff", 0.35 - i * 0.06);
+}
+
+function puff(cx, cy, n = 26) {
+  for (let i = 0; i < n; i++) { const a = Math.random() * 6.28, sp = 0.15 + Math.random() * 0.5; smoke.push({ x: cx, y: cy, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 0.15, life: 40 + Math.random() * 30, age: 0, c: Math.random() < 0.2 ? "#9db4ff" : Math.random() < 0.5 ? "#8b95a7" : "#c9d1d9" }); }
+}
+function vanish() {
+  const oy = ROWS - 17 - 5;
+  const ox = Math.round(ninja.x * COLS);
+  puff(ox + 8, oy + 9, 40);
+  ninja.alpha = 0;
+  setTimeout(() => { ninja.x = 0.12 + Math.random() * 0.34; puff(Math.round(ninja.x * COLS) + 8, oy + 9, 30); ninja.alpha = 1; }, 520);
+  lastVanish = performance.now();
+}
+
+function fog(t) {
+  // Waving pixel fog/water along the bottom: two layers, foam on the crest.
+  for (let x = 0; x < COLS; x++) {
+    const back = ROWS - 5.5 + Math.sin(x * 0.18 + t * 1.3) * 1.3 + Math.sin(x * 0.07 - t * 0.7);
+    for (let y = Math.round(back); y < ROWS; y++) px(x, y, "#2a3a7a", 0.55);
+    const front = ROWS - 3 + Math.sin(x * 0.26 - t * 1.9) * 1.1 + Math.sin(x * 0.09 + t) * 0.8;
+    const top = Math.round(front);
+    for (let y = top; y < ROWS; y++) px(x, y, y === top ? "#9db4ff" : "#4f7cff", y === top ? 0.85 : 0.6 - (y - top) * 0.1);
+  }
+}
+
+function frame(now) {
+  const t = (now - t0) / 1000;
+  g.globalAlpha = 1;
+  // sky gradient
+  const sky = g.createLinearGradient(0, 0, 0, H);
+  sky.addColorStop(0, "#0b1020"); sky.addColorStop(0.7, "#141b38"); sky.addColorStop(1, "#1b1530");
+  g.fillStyle = sky; g.fillRect(0, 0, W, H);
+  for (const s of stars) { const a = 0.35 + 0.65 * Math.abs(Math.sin(t * 1.4 + s.p)); px(s.x * COLS, s.y * ROWS, s.s ? "#ffd2a6" : "#ffffff", a); }
+  moon(COLS - 9, 8);
+  // distant pixel rooftops
+  for (let x = 0; x < COLS; x++) { const hgt = 6 + ((x * 7) % 5 === 0 ? 3 : 0) + (Math.floor(x / 6) % 3); for (let y = ROWS - 5 - Math.round(hgt * 0.7); y < ROWS - 5; y++) px(x, y, "#10162b", 0.95); }
+  const oy = ROWS - 17 - 5;
+  const ox = Math.round(ninja.x * COLS);
+  if (!reduced) {
+    if (now - lastThrow > 2600 && ninja.alpha > 0) { shurikens.push({ x: ox + 15, y: oy + 9, vx: 1.4 }); lastThrow = now; }
+    if (now - lastVanish > 7000) vanish();
+  }
+  drawNinja(ox, oy, t, ninja.alpha);
+  for (let i = shurikens.length - 1; i >= 0; i--) { const s = shurikens[i]; s.x += s.vx; s.y += Math.sin(s.x * 0.15) * 0.08; shuriken(s, t); if (s.x > COLS + 4) shurikens.splice(i, 1); }
+  for (let i = smoke.length - 1; i >= 0; i--) { const s = smoke[i]; s.age++; s.x += s.vx; s.y += s.vy; s.vx *= 0.96; s.vy *= 0.96; px(s.x, s.y, s.c, Math.max(0, 1 - s.age / s.life)); if (s.age > s.life) smoke.splice(i, 1); }
+  fog(t);
+  if (!reduced) requestAnimationFrame(frame);
+}
+size();
+addEventListener("resize", size);
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

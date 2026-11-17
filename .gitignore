@@ -1,0 +1,54 @@
+# ── Dependencies and build output (made again by `npm install` / `npm run build`) ──
+node_modules/
+dist/
+out/
+*.tsbuildinfo
+
+# ── Packaged apps and installers (build them with `npm run install-app` / `npm run package:win`) ──
+*.zip
+*.dmg
+*.exe
+*.msi
+*.blockmap
+*.tgz
+*.app/
+
+# ── Private or third-party material: kept on this computer, never pushed ──
+# research/ holds notes and exports about another app (Caveman Code) that were studied for architecture ideas.
+research/
+# Real-model test runs (screenshots, transcripts, costs). The written reports in testing/reports are kept.
+testing/runs/
+
+# ── Secrets and local configuration ──
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+credentials*.json
+
+# ── Opscode's own state when run from this folder (chats, keys, accounts) ──
+.opscode/
+/state/
+
+# ── Logs and temporary files ──
+*.log
+npm-debug.log*
+/.cache/
+/tmp/
+/.tmp/
+
+# ── Operating system and editor files ──
+.DS_Store
+.AppleDouble
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.claude/
+*.swp

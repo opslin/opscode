@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": [],
+    "baseUrl": ".",
+    "paths": {
+      "@/lib/utils": ["src/islands/lib/utils.ts"],
+      "cn": ["src/islands/lib/utils.ts"],
+      "@/components/assistant-ui/*": ["src/islands/aui/components/assistant-ui/*"],
+      "@/components/ui/*": ["src/islands/aui/ui/*"],
+      "@/hooks/*": ["src/islands/aui/hooks/*"],
+      "@/registry/new-york-v4/ui/*": ["src/islands/aui/ui/*"]
+    }
+  },
+  "include": ["src/islands/**/*"]
+}

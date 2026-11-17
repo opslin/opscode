@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Opscode Brand</title>
+<style>
+  :root { --bg:#111113; --card:#1a1a1c; --tile:#222225; --line:#2c2c30; --text:#ecebe8; --muted:#8d8b88; --accent:#FF7A2F; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.5 -apple-system, BlinkMacSystemFont, "Inter", sans-serif; padding:32px 16px; }
+  main { max-width: 980px; margin: 0 auto; display:grid; gap:24px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:18px; padding:24px 28px; }
+  h2 { margin:0 0 12px; font-size:15px; font-weight:500; color:var(--muted); }
+  .grid { display:flex; flex-wrap:wrap; gap:14px; margin-bottom:18px; }
+  .m { width:96px; height:96px; border-radius:12px; border:1px solid transparent; display:grid; place-items:center; cursor:pointer; background:none; padding:0; }
+  .m:hover { background:var(--tile); }
+  .m[aria-pressed="true"] { border-color:#6b6b70; background:var(--tile); }
+  .m img { width:80px; height:80px; image-rendering:pixelated; }
+  .logos { display:flex; flex-wrap:wrap; gap:24px; align-items:center; }
+  .logos .light { background:#fff; border-radius:12px; padding:16px; }
+  .icons { display:flex; gap:18px; align-items:end; flex-wrap:wrap; }
+  .sel { display:flex; gap:12px; align-items:center; color:var(--muted); }
+  .sel img { width:40px; height:40px; image-rendering:pixelated; }
+  .sel b { color:var(--text); font-weight:600; }
+</style>
+</head>
+<body>
+<main>
+  <section class="card">
+    <h2>Logo</h2>
+    <div class="logos">
+      <img src="logo/opscode-lockup-dark.svg" height="72" alt="Opscode logo on dark">
+      <div class="light"><img src="logo/opscode-lockup-light.svg" height="56" alt="Opscode logo on light"></div>
+    </div>
+    <div class="icons" style="margin-top:20px">
+      <img src="logo/opscode-mark.svg" width="128" alt="App icon">
+      <img src="logo/opscode-mark.svg" width="64" alt="">
+      <img src="logo/opscode-mark.svg" width="32" alt="">
+      <img src="logo/opscode-mark-16.png" width="16" alt="">
+    </div>
+  </section>
+
+  <section class="card">
+    <div id="groups"></div>
+    <div class="sel" id="sel"></div>
+  </section>
+</main>
+<script>
+const MASCOTS = [
+  ["People", [["engineer","Engineer"],["hacker","Hacker"],["wizard","Sysadmin"],["robot","Bot"]]],
+  ["Animals", [["fox","Fox"],["cat","Cat"],["penguin","Penguin"],["octopus","Octo"],["raccoon","Raccoon"],["frog","Frog"],
+               ["axolotl","Axolotl"],["crab","Crab"],["panda","Panda"],["capybara","Capy"],["duck","Duck"],["hedgehog","Hedgehog"]]],
+];
+const root = document.getElementById("groups"), sel = document.getElementById("sel");
+let current = "engineer";
+function pick(id, label) {
+  current = id;
+  document.querySelectorAll(".m").forEach(b => b.setAttribute("aria-pressed", b.dataset.id === id));
+  sel.innerHTML = `<img src="mascots/svg/${id}.svg" alt=""> Your mascot: <b>${label}</b>`;
+}
+for (const [group, items] of MASCOTS) {
+  const h = document.createElement("h2"); h.textContent = group; root.append(h);
+  const g = document.createElement("div"); g.className = "grid"; root.append(g);
+  for (const [id, label] of items) {
+    const b = document.createElement("button");
+    b.className = "m"; b.dataset.id = id; b.title = label;
+    b.innerHTML = `<img src="mascots/svg/${id}.svg" alt="${label}">`;
+    b.onclick = () => pick(id, label);
+    g.append(b);
+  }
+}
+pick("engineer", "Engineer");
+</script>
+</body>
+</html>

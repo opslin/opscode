@@ -1,0 +1,26 @@
+{
+  "appId": "com.opscode.app",
+  "productName": "Opscode",
+  "copyright": "Opscode",
+  "directories": { "output": "out/win-installer" },
+  "artifactName": "Opscode-Setup-${version}-x64.exe",
+  "win": {
+    "target": [{ "target": "nsis", "arch": ["x64"] }],
+    "icon": "assets/brand/logo/opscode.ico",
+    "signAndEditExecutable": false
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowElevation": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "Opscode",
+    "runAfterFinish": true,
+    "deleteAppDataOnUninstall": false,
+    "installerIcon": "assets/brand/logo/opscode.ico",
+    "uninstallerIcon": "assets/brand/logo/opscode.ico",
+    "installerHeaderIcon": "assets/brand/logo/opscode.ico"
+  }
+}
