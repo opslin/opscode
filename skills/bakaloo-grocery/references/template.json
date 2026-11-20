@@ -1,0 +1,912 @@
+{
+  "schema": 1,
+  "id": "bakaloo-grocery",
+  "version": "1.4.0",
+  "profiles": {
+    "home-ui": {
+      "summary": "Flutter storefront homepage with fixture data and a design kit.",
+      "modules": [
+        "mobile-home"
+      ],
+      "repositories": [
+        "flutter-app"
+      ]
+    },
+    "grocery-core": {
+      "summary": "Customer app, staff dashboard, API, catalog, published homepage and order lifecycle.",
+      "modules": [
+        "theme-builder",
+        "order-operations"
+      ],
+      "repositories": [
+        "backend",
+        "dashboard",
+        "flutter-app"
+      ]
+    },
+    "bakaloo-baseline": {
+      "summary": "All three pinned Bakaloo repos and the catalogued feature families. Source acquisition and app validation are separate steps.",
+      "modules": [
+        "api-foundation",
+        "dashboard-foundation",
+        "mobile-foundation",
+        "grocery-design",
+        "mobile-home",
+        "identity",
+        "catalog",
+        "theme-builder",
+        "fulfillment",
+        "cart-checkout",
+        "payments",
+        "order-operations",
+        "promotions-loyalty",
+        "customer-experience",
+        "store-operations",
+        "b2b-commerce",
+        "retail-operations",
+        "messaging"
+      ],
+      "repositories": [
+        "backend",
+        "dashboard",
+        "flutter-app"
+      ]
+    },
+    "theme-builder": {
+      "summary": "Local dashboard editor, migrated PostgreSQL and Fastify publication API, and a Flutter storefront with demo products.",
+      "modules": [
+        "theme-builder"
+      ],
+      "repositories": [
+        "backend",
+        "dashboard",
+        "flutter-app"
+      ]
+    },
+    "commerce": {
+      "summary": "Bakaloo home, Browse and Cart for Fresh Basket, with the 13-type theme editor, local catalog, checkout and staff orders.",
+      "modules": [
+        "commerce-demo"
+      ],
+      "repositories": [
+        "backend",
+        "dashboard",
+        "flutter-app"
+      ]
+    }
+  },
+  "modules": {
+    "api-foundation": {
+      "summary": "Fastify app, request lifecycle, PostgreSQL migrations, Redis and runtime plugins.",
+      "requires": [],
+      "groups": [
+        "backend:src",
+        "backend:src/config",
+        "backend:src/database",
+        "backend:src/plugins",
+        "backend:src/middlewares",
+        "backend:src/runtime",
+        "backend:src/utils"
+      ],
+      "checks": [
+        "Boot with an isolated database and Redis, migrate an empty database, seed it, and verify GET /health."
+      ],
+      "guide": "engineering.md",
+      "aliases": [
+        "database",
+        "redis",
+        "fastify",
+        "migrations",
+        "api",
+        "postgres"
+      ]
+    },
+    "dashboard-foundation": {
+      "summary": "Next.js shell, typed API client, role-aware navigation and shared UI.",
+      "requires": [],
+      "groups": [
+        "dashboard:src/lib",
+        "dashboard:src/store",
+        "dashboard:components/layout",
+        "dashboard:components/providers",
+        "dashboard:components/ui",
+        "dashboard:src/types",
+        "dashboard:pages/layout.tsx",
+        "dashboard:pages/login"
+      ],
+      "checks": [
+        "Build the dashboard and verify direct navigation respects session and role boundaries."
+      ],
+      "guide": "engineering.md",
+      "aliases": [
+        "nextjs",
+        "admin-shell",
+        "web",
+        "api-client",
+        "rbac"
+      ]
+    },
+    "mobile-foundation": {
+      "summary": "Flutter bootstrap, routing, dependency wiring, storage, sessions and Dio networking.",
+      "requires": [],
+      "groups": [
+        "flutter-app:lib",
+        "flutter-app:lib/routing",
+        "flutter-app:core/di",
+        "flutter-app:core/network",
+        "flutter-app:core/session",
+        "flutter-app:core/storage",
+        "flutter-app:core/constants",
+        "flutter-app:shared/widgets"
+      ],
+      "checks": [
+        "Run Flutter analysis and tests, then navigate the selected flow on a target device or simulator."
+      ],
+      "guide": "engineering.md",
+      "aliases": [
+        "flutter",
+        "mobile",
+        "routing",
+        "dio",
+        "riverpod",
+        "go-router"
+      ]
+    },
+    "grocery-design": {
+      "summary": "Grocery design tokens, component patterns, imagery and 3D category icon specification.",
+      "requires": [],
+      "groups": [
+        "flutter-app:core/theme",
+        "flutter-app:core/branding",
+        "flutter-app:assets/images",
+        "flutter-app:assets/3d_icons",
+        "flutter-app:assets/fonts",
+        "flutter-app:assets/lottie"
+      ],
+      "checks": [
+        "Compare at representative widths and text scales, verify asset ownership and check image fallback states."
+      ],
+      "guide": "design.md",
+      "aliases": [
+        "ui",
+        "3d icons",
+        "3d-icons",
+        "brand",
+        "branding",
+        "assets",
+        "theme tokens"
+      ]
+    },
+    "mobile-home": {
+      "summary": "Bundled Bakaloo Flutter homepage with original widget code, local fixtures and assets.",
+      "requires": [
+        "mobile-foundation",
+        "grocery-design"
+      ],
+      "groups": [
+        "flutter-app:features/home",
+        "flutter-app:features/categories",
+        "flutter-app:features/nav_button",
+        "flutter-app:core/theme",
+        "flutter-app:shared/widgets"
+      ],
+      "checks": [
+        "With fixture data and network disabled, verify hero, category icons, product rails, navigation, empty data and failed media."
+      ],
+      "guide": "mobile-home.md",
+      "aliases": [
+        "homepage",
+        "home screen",
+        "storefront",
+        "category icons",
+        "product rail"
+      ],
+      "bundled_profile": "home-ui"
+    },
+    "identity": {
+      "summary": "Customer and staff sign-in, role guards, session renewal and customer profile.",
+      "requires": [
+        "api-foundation",
+        "dashboard-foundation",
+        "mobile-foundation"
+      ],
+      "groups": [
+        "backend:auth",
+        "backend:admin/auth",
+        "backend:admin/team",
+        "backend:users",
+        "backend:shop-staff",
+        "dashboard:services/auth",
+        "dashboard:services/rbac",
+        "dashboard:pages/login",
+        "dashboard:pages/team",
+        "flutter-app:features/auth",
+        "flutter-app:features/profile",
+        "flutter-app:core/session"
+      ],
+      "checks": [
+        "Cover expiry and refresh, logout, denied cross-shop access, and caller role and user ownership on protected endpoints."
+      ],
+      "guide": "engineering.md",
+      "aliases": [
+        "authentication",
+        "auth",
+        "login",
+        "otp",
+        "roles",
+        "accounts"
+      ]
+    },
+    "catalog": {
+      "summary": "Products, categories, search, inventory and per-shop product visibility.",
+      "requires": [
+        "api-foundation",
+        "dashboard-foundation",
+        "mobile-foundation"
+      ],
+      "groups": [
+        "backend:products",
+        "backend:admin/products",
+        "backend:categories",
+        "backend:product-families",
+        "backend:catalog-bulk",
+        "backend:shop-products",
+        "dashboard:pages/products",
+        "dashboard:pages/categories",
+        "dashboard:pages/shop-products",
+        "dashboard:services/products",
+        "dashboard:services/categories",
+        "flutter-app:features/products",
+        "flutter-app:features/categories",
+        "flutter-app:features/search"
+      ],
+      "checks": [
+        "Create a product in the dashboard and find it in the app for the correct store and audience, with correct availability, price and units."
+      ],
+      "guide": "commerce.md",
+      "aliases": [
+        "products",
+        "categories",
+        "inventory",
+        "search",
+        "product families"
+      ]
+    },
+    "theme-builder": {
+      "summary": "Bundled Bakaloo Next.js section editor, Fastify section API, PostgreSQL publication history, and Flutter renderer.",
+      "requires": [
+        "api-foundation",
+        "dashboard-foundation",
+        "mobile-home"
+      ],
+      "groups": [
+        "backend:themes",
+        "backend:theme-tabs",
+        "backend:admin/themes",
+        "backend:admin/theme-tabs",
+        "backend:admin/sections",
+        "backend:branding",
+        "dashboard:pages/themes",
+        "dashboard:components/builder",
+        "dashboard:services/sections",
+        "dashboard:services/themes",
+        "dashboard:services/theme-tabs",
+        "flutter-app:core/theme",
+        "flutter-app:features/home"
+      ],
+      "checks": [
+        "Save a draft in the real dashboard and verify the currently published Flutter homepage stays unchanged.",
+        "Push Live, verify the public revision increases, and confirm the open Flutter UI refreshes without a reload.",
+        "Upload a banner, publish it and verify Flutter loads the image from the local API."
+      ],
+      "guide": "theme-builder.md",
+      "aliases": [
+        "page builder",
+        "homepage editor",
+        "section library",
+        "sections",
+        "manifest",
+        "drag and drop",
+        "theme preview"
+      ],
+      "bundled_profile": "theme-builder"
+    },
+    "fulfillment": {
+      "summary": "Addresses, serviceability, allocation, store status, delivery schedule and order tracking.",
+      "requires": [
+        "api-foundation",
+        "catalog",
+        "identity"
+      ],
+      "groups": [
+        "backend:addresses",
+        "backend:allocation",
+        "backend:coverage-map",
+        "backend:delivery",
+        "backend:delivery-calendar",
+        "backend:pincode-mappings",
+        "backend:rider-assignment",
+        "backend:scheduled-orders",
+        "backend:store-status",
+        "dashboard:pages/hq/coverage-map",
+        "dashboard:pages/riders",
+        "dashboard:services/delivery-calendar",
+        "flutter-app:features/location",
+        "flutter-app:features/addresses",
+        "flutter-app:features/tracking"
+      ],
+      "checks": [
+        "Verify serviceable and out-of-area addresses, allocation, store hours, delivery slot eligibility and status transitions."
+      ],
+      "guide": "commerce.md",
+      "aliases": [
+        "delivery",
+        "allocation",
+        "slots",
+        "schedule",
+        "tracking",
+        "coverage",
+        "maps"
+      ]
+    },
+    "cart-checkout": {
+      "summary": "Cart, bill summary, checkout, order creation and stock reservation.",
+      "requires": [
+        "identity",
+        "catalog",
+        "fulfillment"
+      ],
+      "groups": [
+        "backend:cart",
+        "backend:orders",
+        "backend:fee-config",
+        "backend:fee-settings",
+        "backend:purchase-limits",
+        "backend:payments",
+        "flutter-app:features/cart",
+        "flutter-app:features/checkout",
+        "flutter-app:features/orders",
+        "dashboard:pages/orders"
+      ],
+      "checks": [
+        "Verify fees and authoritative totals, stock races, rejection on invalid stock, retries, and successful order creation with a permitted test payment method."
+      ],
+      "guide": "commerce.md",
+      "aliases": [
+        "cart",
+        "basket",
+        "checkout",
+        "order creation",
+        "fees",
+        "stock",
+        "totals"
+      ]
+    },
+    "payments": {
+      "summary": "Payment settings, provider verification, offers, wallet and refunds.",
+      "requires": [
+        "cart-checkout"
+      ],
+      "groups": [
+        "backend:payments",
+        "backend:payment-settings",
+        "backend:payment-offers",
+        "backend:refund-requests",
+        "backend:wallet",
+        "backend:wallet-settings",
+        "backend:ledger",
+        "dashboard:pages/settings/payments",
+        "dashboard:pages/refund-requests",
+        "dashboard:pages/wallet",
+        "flutter-app:features/payments",
+        "flutter-app:features/refund_requests",
+        "flutter-app:features/wallet",
+        "flutter-app:features/ledger"
+      ],
+      "checks": [
+        "Replay a sandbox callback and test failure, reconciliation, refunds and idempotency without real charges."
+      ],
+      "guide": "commerce.md",
+      "aliases": [
+        "razorpay",
+        "payment",
+        "wallet",
+        "cod",
+        "refund",
+        "ledger"
+      ]
+    },
+    "order-operations": {
+      "summary": "Order list, store and HQ order workflows, fulfillment status and customer tracking.",
+      "requires": [
+        "cart-checkout"
+      ],
+      "groups": [
+        "backend:orders",
+        "backend:admin/orders",
+        "backend:shop-orders",
+        "backend:delivery",
+        "dashboard:pages/orders",
+        "dashboard:pages/hq/orders",
+        "dashboard:pages/store/orders",
+        "dashboard:services/orders",
+        "dashboard:services/shop-orders",
+        "flutter-app:features/orders",
+        "flutter-app:features/tracking"
+      ],
+      "checks": [
+        "Place a test order in Flutter, find it in the dashboard, progress its status and observe the update in Flutter. Verify inventory restoration on eligible cancellation."
+      ],
+      "guide": "commerce.md",
+      "aliases": [
+        "order management",
+        "order status",
+        "admin orders",
+        "shop orders"
+      ]
+    },
+    "promotions-loyalty": {
+      "summary": "Coupons, merchandising banners, milestone discounts, cashback and rewards.",
+      "requires": [
+        "cart-checkout"
+      ],
+      "groups": [
+        "backend:banners",
+        "backend:coupons",
+        "backend:cart-milestones",
+        "backend:cashback",
+        "backend:first-time-offers",
+        "backend:scratch-card",
+        "backend:spin-wheel",
+        "dashboard:pages/banners",
+        "dashboard:pages/coupons",
+        "dashboard:pages/cart-milestones",
+        "dashboard:pages/first-time-offers",
+        "dashboard:pages/scratch-card",
+        "dashboard:pages/spin-wheel",
+        "flutter-app:features/scratch_card",
+        "flutter-app:features/spin_wheel"
+      ],
+      "checks": [
+        "Verify eligibility, limits, stacking, expiry and behavior when an order is reversed."
+      ],
+      "guide": "commerce.md",
+      "aliases": [
+        "promo",
+        "discount",
+        "coupon",
+        "cashback",
+        "rewards",
+        "scratch card",
+        "spin wheel"
+      ]
+    },
+    "customer-experience": {
+      "summary": "Saved items, reviews, tutorials, notifications and remote navigation.",
+      "requires": [
+        "identity",
+        "catalog"
+      ],
+      "groups": [
+        "backend:wishlist",
+        "backend:reviews",
+        "backend:tutorials",
+        "backend:notifications",
+        "backend:nav-buttons",
+        "backend:webview",
+        "dashboard:pages/reviews",
+        "dashboard:pages/tutorials",
+        "dashboard:pages/notifications",
+        "dashboard:pages/nav-button",
+        "flutter-app:features/wishlist",
+        "flutter-app:features/reviews",
+        "flutter-app:features/tutorials",
+        "flutter-app:features/notifications",
+        "flutter-app:features/nav_button"
+      ],
+      "checks": [
+        "Verify customer ownership, notification consent and routing targets, plus empty and opt-out states."
+      ],
+      "guide": "engineering.md",
+      "aliases": [
+        "wishlist",
+        "review",
+        "tutorial",
+        "push",
+        "notifications",
+        "deep links"
+      ]
+    },
+    "store-operations": {
+      "summary": "Shop setup, staff, inventory, HQ reporting, audit and store finance.",
+      "requires": [
+        "identity",
+        "catalog",
+        "order-operations"
+      ],
+      "groups": [
+        "backend:shops",
+        "backend:shop-staff",
+        "backend:shop-dashboard",
+        "backend:shop-financials",
+        "backend:shop-transactions",
+        "backend:shop-reports",
+        "backend:audit-logs",
+        "backend:admin/finance",
+        "backend:admin/reports",
+        "dashboard:pages/shops",
+        "dashboard:pages/store/staff",
+        "dashboard:pages/store/inventory",
+        "dashboard:pages/hq/finance",
+        "dashboard:pages/shop-financials",
+        "dashboard:pages/shop-transactions"
+      ],
+      "checks": [
+        "Verify shop scope and permissions, inventory ownership, financial totals and audit events against fixture activity."
+      ],
+      "guide": "commerce.md",
+      "aliases": [
+        "store",
+        "hq",
+        "finance",
+        "reporting",
+        "audit",
+        "shops",
+        "vendor",
+        "staff"
+      ]
+    },
+    "b2b-commerce": {
+      "summary": "Business accounts, audience-specific catalog and pricing, bulk orders and GST workflows.",
+      "requires": [
+        "catalog",
+        "order-operations"
+      ],
+      "groups": [
+        "backend:business-accounts",
+        "backend:business-analytics",
+        "backend:bulk-orders",
+        "backend:admin/business-accounts",
+        "backend:admin/gstr1",
+        "dashboard:pages/b2b/applications",
+        "dashboard:pages/b2b/gst",
+        "dashboard:pages/b2b/orders",
+        "dashboard:pages/business-analytics",
+        "flutter-app:features/business_account"
+      ],
+      "checks": [
+        "Verify B2B approval and B2C isolation, price audience, tax calculations, quantity limits and bulk order lifecycle."
+      ],
+      "guide": "commerce.md",
+      "aliases": [
+        "business",
+        "wholesale",
+        "bulk orders",
+        "b2b",
+        "gst"
+      ]
+    },
+    "retail-operations": {
+      "summary": "POS checkout, procurement and back-office ERP workflows.",
+      "requires": [
+        "store-operations"
+      ],
+      "groups": [
+        "backend:pos",
+        "backend:erp",
+        "backend:procurement",
+        "dashboard:pages/pos",
+        "dashboard:pages/erp",
+        "dashboard:pages/procurement",
+        "dashboard:components/pos",
+        "dashboard:services/erp"
+      ],
+      "checks": [
+        "Run a fixture purchase through procurement and check POS checkout, permissions and failure recovery for selected workflows."
+      ],
+      "guide": "commerce.md",
+      "aliases": [
+        "pos",
+        "erp",
+        "procurement",
+        "warehouse",
+        "printing"
+      ]
+    },
+    "messaging": {
+      "summary": "WhatsApp CRM, abandoned carts, operator chat and notification workflows.",
+      "requires": [
+        "identity",
+        "order-operations"
+      ],
+      "groups": [
+        "backend:whatsapp-crm",
+        "backend:abandoned-carts",
+        "backend:team-chat",
+        "backend:admin/whatsapp-crm",
+        "backend:admin/team-chat",
+        "dashboard:pages/whatsapp-crm",
+        "dashboard:components/whatsapp-crm",
+        "dashboard:components/team-chat",
+        "dashboard:pages/abandoned-carts",
+        "dashboard:services/whatsapp-crm"
+      ],
+      "checks": [
+        "Exercise opt-in, deduplicated webhook handling and operator authorization with test providers and recipients."
+      ],
+      "guide": "engineering.md",
+      "aliases": [
+        "whatsapp",
+        "crm",
+        "chat",
+        "abandoned carts",
+        "messaging"
+      ]
+    },
+    "commerce-demo": {
+      "summary": "Assembled Fresh Basket storefront with editable catalog, PostgreSQL checkout and a dashboard orders view.",
+      "requires": [
+        "theme-builder"
+      ],
+      "groups": [
+        "backend:products",
+        "backend:cart",
+        "backend:orders",
+        "dashboard:pages/products",
+        "dashboard:pages/orders",
+        "flutter-app:features/home",
+        "flutter-app:features/categories",
+        "flutter-app:features/products",
+        "flutter-app:features/cart",
+        "flutter-app:features/checkout"
+      ],
+      "checks": [
+        "Create a product in the dashboard, add it to the Flutter cart, place a demo order, and verify it in Orders.",
+        "Replay the same checkout and verify stock and order count change only once.",
+        "Publish a merchandise section with hand-picked products and verify it updates the open Flutter home."
+      ],
+      "guide": "commerce.md",
+      "aliases": [
+        "fresh basket",
+        "local grocery",
+        "Bakaloo Browse and Cart",
+        "home section library",
+        "demo checkout"
+      ],
+      "bundled_profile": "commerce"
+    }
+  },
+  "contracts": [
+    {
+      "source": "dashboard:services/sections",
+      "target": "backend:admin/sections",
+      "relationship": "Section editor persistence, reorder, versioning and scheduling through /api/v1/admin/sections.",
+      "evidence": [
+        "src/services/sections.service.ts",
+        "src/modules/admin/sections/sections.routes.js"
+      ]
+    },
+    {
+      "source": "dashboard:services/themes",
+      "target": "backend:admin/themes",
+      "relationship": "Theme CRUD, activation and rollback through /api/v1/admin/themes.",
+      "evidence": [
+        "src/services/themes.service.ts",
+        "src/modules/admin/themes/themes.routes.js"
+      ]
+    },
+    {
+      "source": "dashboard:services/theme-tabs",
+      "target": "backend:admin/theme-tabs",
+      "relationship": "Dashboard tab management and Fastify admin tab routes.",
+      "evidence": [
+        "src/services/theme-tabs.service.ts",
+        "src/modules/admin/theme-tabs/theme-tabs.routes.js"
+      ]
+    },
+    {
+      "source": "flutter-app:core/theme",
+      "target": "backend:themes",
+      "relationship": "Flutter manifest provider reads GET /api/v1/theme/tabs/:tabKey/sections and caches by context.",
+      "evidence": [
+        "lib/core/theme/section_manifest_provider.dart",
+        "src/modules/themes/public.routes.js"
+      ]
+    },
+    {
+      "source": "dashboard:services/products",
+      "target": "backend:admin/products",
+      "relationship": "Dashboard admin product calls and API product management routes.",
+      "evidence": [
+        "src/services/products.service.ts",
+        "src/modules/admin/products/products.routes.js"
+      ]
+    },
+    {
+      "source": "dashboard:services/orders",
+      "target": "backend:admin/orders",
+      "relationship": "Dashboard admin order calls and API order management routes.",
+      "evidence": [
+        "src/services/orders.service.ts",
+        "src/modules/admin/orders/orders.routes.js"
+      ]
+    },
+    {
+      "source": "flutter-app:features/auth",
+      "target": "backend:auth",
+      "relationship": "Flutter auth uses /api/v1/auth/verify-otp.",
+      "evidence": [
+        "lib/features/auth/data/datasources/auth_remote_datasource.dart",
+        "src/modules/auth/auth.routes.js"
+      ]
+    },
+    {
+      "source": "flutter-app:features/profile",
+      "target": "backend:users",
+      "relationship": "Flutter profile uses /api/v1/users/me.",
+      "evidence": [
+        "lib/features/profile/data/datasources/user_remote_datasource.dart",
+        "src/modules/users/users.routes.js"
+      ]
+    },
+    {
+      "source": "flutter-app:features/addresses",
+      "target": "backend:addresses",
+      "relationship": "Flutter addresses uses /api/v1/addresses.",
+      "evidence": [
+        "lib/features/addresses/data/datasources/address_remote_datasource.dart",
+        "src/modules/addresses/addresses.routes.js"
+      ]
+    },
+    {
+      "source": "flutter-app:features/cart",
+      "target": "backend:cart",
+      "relationship": "Flutter cart uses /api/v1/cart.",
+      "evidence": [
+        "lib/features/cart/data/datasources/cart_remote_datasource.dart",
+        "src/modules/cart/cart.routes.js"
+      ]
+    },
+    {
+      "source": "flutter-app:features/checkout",
+      "target": "backend:orders",
+      "relationship": "Flutter checkout uses /api/v1/orders.",
+      "evidence": [
+        "lib/features/checkout/data/datasources/order_remote_datasource.dart",
+        "src/modules/orders/orders.routes.js"
+      ]
+    },
+    {
+      "source": "flutter-app:features/checkout",
+      "target": "backend:coupons",
+      "relationship": "Flutter checkout uses /api/v1/coupons/available.",
+      "evidence": [
+        "lib/features/checkout/data/datasources/coupon_remote_datasource.dart",
+        "src/modules/coupons/coupons.routes.js"
+      ]
+    },
+    {
+      "source": "flutter-app:features/orders",
+      "target": "backend:orders",
+      "relationship": "Flutter orders uses /api/v1/orders.",
+      "evidence": [
+        "lib/features/orders/data/datasources/order_remote_datasource.dart",
+        "src/modules/orders/orders.routes.js"
+      ]
+    },
+    {
+      "source": "flutter-app:features/payments",
+      "target": "backend:payments",
+      "relationship": "Flutter payments uses /api/v1/payments/create-order.",
+      "evidence": [
+        "lib/features/payments/data/datasources/payment_remote_datasource.dart",
+        "src/modules/payments/payments.routes.js"
+      ]
+    },
+    {
+      "source": "flutter-app:features/search",
+      "target": "backend:products",
+      "relationship": "Flutter search uses /api/v1/products/search.",
+      "evidence": [
+        "lib/features/search/data/datasources/search_remote_datasource.dart",
+        "src/modules/products/products.routes.js"
+      ]
+    },
+    {
+      "source": "flutter-app:features/notifications",
+      "target": "backend:notifications",
+      "relationship": "Flutter notifications uses /api/v1/notifications.",
+      "evidence": [
+        "lib/features/notifications/data/datasources/notification_remote_datasource.dart",
+        "src/modules/notifications/notifications.routes.js"
+      ]
+    },
+    {
+      "source": "flutter-app:features/wishlist",
+      "target": "backend:wishlist",
+      "relationship": "Flutter wishlist uses /api/v1/wishlist.",
+      "evidence": [
+        "lib/features/wishlist/data/datasources/wishlist_remote_datasource.dart",
+        "src/modules/wishlist/wishlist.routes.js"
+      ]
+    },
+    {
+      "source": "flutter-app:features/wallet",
+      "target": "backend:wallet",
+      "relationship": "Flutter wallet uses /api/v1/wallet.",
+      "evidence": [
+        "lib/features/wallet/data/datasources/wallet_remote_datasource.dart",
+        "src/modules/wallet/wallet.routes.js"
+      ]
+    },
+    {
+      "source": "flutter-app:features/scratch_card",
+      "target": "backend:scratch-card",
+      "relationship": "Flutter scratch card uses /api/v1/scratch-card/appearance.",
+      "evidence": [
+        "lib/features/scratch_card/data/datasources/scratch_card_remote_datasource.dart",
+        "src/modules/scratch-card/scratch-card.routes.js"
+      ]
+    },
+    {
+      "source": "flutter-app:features/spin_wheel",
+      "target": "backend:spin-wheel",
+      "relationship": "Flutter spin wheel uses /api/v1/spin-wheel/config.",
+      "evidence": [
+        "lib/features/spin_wheel/data/datasources/spin_wheel_remote_datasource.dart",
+        "src/modules/spin-wheel/spin-wheel.routes.js"
+      ]
+    }
+  ],
+  "bundles": {
+    "home-ui": {
+      "covers": [
+        "mobile-foundation",
+        "grocery-design",
+        "mobile-home"
+      ],
+      "source": "modules/mobile-home/source",
+      "entrypoint": "lib/main.dart",
+      "assembler": "scripts/assemble.py",
+      "guide": "references/mobile-home.md",
+      "platforms": [
+        "web"
+      ]
+    },
+    "theme-builder": {
+      "covers": [
+        "api-foundation",
+        "dashboard-foundation",
+        "mobile-foundation",
+        "grocery-design",
+        "mobile-home",
+        "theme-builder"
+      ],
+      "source": "modules/theme-builder/source",
+      "entrypoint": "run_local.py",
+      "assembler": "scripts/assemble.py",
+      "guide": "references/theme-builder.md",
+      "platforms": [
+        "web"
+      ]
+    },
+    "commerce": {
+      "covers": [
+        "api-foundation",
+        "dashboard-foundation",
+        "mobile-foundation",
+        "grocery-design",
+        "mobile-home",
+        "theme-builder",
+        "commerce-demo"
+      ],
+      "source": "modules/commerce/source",
+      "entrypoint": "backend/src/modules/commerce/commerce.routes.js",
+      "assembler": "scripts/assemble.py",
+      "guide": "references/commerce.md",
+      "platforms": [
+        "web"
+      ]
+    }
+  }
+}

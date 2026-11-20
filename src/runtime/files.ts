@@ -58,6 +58,34 @@ export interface ReadResult {
   content: string;
 }
 
+/** A binary slice with a file revision so transfers do not mix bytes from different versions. */
+export function readFileChunk(root: string, rel: string, offset: number, maxBytes: number, expected?: string) {
+  const target = resolveExisting(root, rel);
+  let fd: number;
+  try { fd = openSync(target.abs, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
+  catch (error) { throw ioFailure(error, target.rel); }
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) throw fail.invalid("path is not a regular file");
+    const revisionOf = (s: typeof stat) => [s.dev, s.ino, s.size, s.mtimeMs, s.ctimeMs].join(":");
+    const revision = revisionOf(stat);
+    if (expected !== undefined && revision !== expected) throw fail.conflict("The file changed during transfer.");
+    if (offset > stat.size) throw fail.invalid("The file is shorter than expected.");
+    const bytes = Buffer.alloc(Math.min(maxBytes, stat.size - offset));
+    let read = 0;
+    while (read < bytes.length) {
+      const count = readSync(fd, bytes, read, bytes.length - read, offset + read);
+      if (!count) break;
+      read += count;
+    }
+    if (read !== bytes.length || (read > 0 && revisionOf(fstatSync(fd)) !== revision)) {
+      throw fail.conflict("The file changed during transfer.");
+    }
+    return { size: stat.size, offset: offset + read, revision, data: bytes.toString("base64") };
+  } catch (error) { throw rethrow(error, target.rel); }
+  finally { closeSync(fd); }
+}
+
 export function readFile(root: string, rel: string, maxBytes: number = LIMITS.FS_IO_MAX_BYTES): ReadResult {
   const target = resolveExisting(root, rel);
   let fd: number;

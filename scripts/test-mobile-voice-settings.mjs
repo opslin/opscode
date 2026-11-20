@@ -1,0 +1,5 @@
+import assert from 'node:assert/strict';
+import { MobileWorkspace } from '../dist/main/mobileWorkspace.js';
+const calls=[]; const client={call:async(m,p)=>{calls.push([m,p]); if(m==='settings.get')return {settings:{voice_locale:'auto',tts_locale:'hi',voice_tts_voice:'hi-priya',secret:'private'}}; if(m==='voice.locales')return {speech:['en','hi']}; if(m==='tts.status')return {languages:['en','hi'],voices:[{id:'hi-priya',name:'Priya',language:'hi'}],installed:true}; if(m==='settings.set')return {}; throw Error(m);}};
+const ws=new MobileWorkspace(()=>client);
+try{const settings=await ws.request('phone',{op:'voice.settings'}); assert.equal(settings.settings.voice_locale,'auto'); assert.equal(settings.settings.secret,undefined); await ws.request('phone',{op:'voice.settings.set',field:'voice_tts_voice',value:'hi-priya'}); assert.deepEqual(calls.at(-1),['settings.set',{patch:{voice_tts_voice:'hi-priya'}}]); await assert.rejects(ws.request('phone',{op:'voice.settings.set',field:'secret',value:'x'}));console.log('PASS mobile voice language and voice settings');}finally{ws.stop()}

@@ -1,5 +1,5 @@
 // Builds Opscode.app for macOS from the Electron runtime in node_modules and
-// installs it (default: /Applications). No network, no extra tools:
+// installs it (default: /Applications). The first build provisions the local voice runtime with uv.
 //   node scripts/package-mac.mjs            build into ./out and install
 //   node scripts/package-mac.mjs --no-install
 //
@@ -13,6 +13,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { prepareLocalVoice } from "./build-local-voice.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const install = !process.argv.includes("--no-install");
@@ -35,8 +36,10 @@ if (!existsSync(icns)) throw new Error(`missing ${icns}`);
 console.log("1/6 build");
 run("npm", ["run", "build"], { cwd: root, stdio: "inherit" });
 
+const voiceRuntime = prepareLocalVoice();
+
 console.log("2/6 copy Electron");
-rmSync(out, { recursive: true, force: true });
+rmSync(app, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
 const electronApp = join(root, "node_modules/electron/dist/Electron.app");
 run("ditto", [electronApp, app]);
@@ -53,9 +56,8 @@ plist(info, "CFBundleIconFile", "opscode.icns");
 plist(info, "CFBundleShortVersionString", pkg.version);
 plist(info, "CFBundleVersion", pkg.version);
 plist(info, "NSHumanReadableCopyright", "Opscode");
-// Voice (native/opscode-voice): macOS shows these when it asks for the microphone and speech recognition.
+// macOS shows this when Opscode first requests microphone access.
 plist(info, "NSMicrophoneUsageDescription", "Opscode uses the microphone when you dictate a message or record a voice note. Speech is turned into text on this Mac.");
-plist(info, "NSSpeechRecognitionUsageDescription", "Opscode turns your speech into text on this Mac, with the on-device speech recognition built into macOS.");
 plistDelete(info, "ElectronAsarIntegrity");
 rmSync(join(app, "Contents/Resources/electron.icns"), { force: true });
 cpSync(icns, join(app, "Contents/Resources/opscode.icns"));
@@ -80,9 +82,13 @@ for (const name of readdirSync(frameworks)) {
 console.log("4/6 copy the app");
 const resources = join(app, "Contents/Resources/app");
 mkdirSync(resources, { recursive: true });
+cpSync(voiceRuntime, join(resources, "voice-runtime"), { recursive: true, verbatimSymlinks: true });
 const slim = { name: pkg.name, productName: pkg.productName ?? APP, version: pkg.version, main: pkg.main, type: pkg.type, dependencies: pkg.dependencies };
 writeFileSync(join(resources, "package.json"), JSON.stringify(slim, null, 2));
-cpSync(join(root, "dist"), join(resources, "dist"), { recursive: true });
+cpSync(join(root, "dist"), join(resources, "dist"), {
+  recursive: true,
+  filter: (source) => source !== join(root, "dist/native/opscode-voice"),
+});
 cpSync(join(root, "assets/brand"), join(resources, "assets/brand"), { recursive: true });
 // Production dependencies only (and what they need), found by npm itself.
 const prod = run("npm", ["ls", "--omit=dev", "--all", "--parseable"], { cwd: root }).split("\n").map((s) => s.trim()).filter((p) => p && p !== root && p.startsWith(join(root, "node_modules")));
@@ -97,10 +103,32 @@ for (const arch of ["darwin-arm64", "darwin-x64"]) {
   if (existsSync(h)) chmodSync(h, 0o755);
 }
 
-console.log("5/6 sign (ad hoc)");
+// Computer use: the hands helper goes beside the app's own program, so macOS treats it as part of Opscode and applies the
+// person's Accessibility permission for Opscode to it (a helper left in Resources would need a permission of its own).
+const handsSrc = join(root, "dist/native/opscode-hands");
+const handsDest = join(app, "Contents/MacOS/opscode-hands");
+if (existsSync(handsSrc)) { cpSync(handsSrc, handsDest); chmodSync(handsDest, 0o755); }
+
+// Signing. With the person's own "Opscode Local Signing" certificate (in the login keychain) every build has the same identity,
+// so macOS keeps the Accessibility / Screen Recording / Microphone permissions across reinstalls. Ad hoc signing would make
+// each build a new app to macOS (its identity is the exact build fingerprint) and the permissions silently stop applying.
+// OPSCODE_SIGN_IDENTITY picks another identity; "-" forces ad hoc.
+const IDENTITY = process.env.OPSCODE_SIGN_IDENTITY ?? "Opscode Local Signing";
+let signWith = "-";
+if (IDENTITY !== "-") {
+  try { if (run("security", ["find-identity", "-p", "codesigning"]).includes(`"${IDENTITY}"`)) signWith = IDENTITY; } catch { /* no keychain access */ }
+}
+console.log(`5/6 sign (${signWith === "-" ? "ad hoc: permissions are forgotten on each reinstall" : signWith})`);
 run("xattr", ["-cr", app]);
-run("codesign", ["--force", "--deep", "--sign", "-", app]);
+run("codesign", ["--force", "--deep", "--sign", signWith, app]);
+if (existsSync(handsDest)) {
+  // Signed as the app itself (same identifier, so the same designated requirement), then the app is sealed again to include it.
+  run("codesign", ["--force", "--sign", signWith, "--identifier", "com.opscode.app", handsDest]);
+  run("codesign", ["--force", "--sign", signWith, app]);
+}
 run("codesign", ["--verify", "--deep", "--strict", app]);
+if (existsSync(handsDest)) console.log(`   helper: ${run("codesign", ["-dr", "-", handsDest], { stdio: ["ignore", "pipe", "pipe"] }).trim().split("\n").pop()}`);
+if (signWith !== "-") console.log(`   ${run("codesign", ["-dr", "-", app], { stdio: ["ignore", "pipe", "pipe"] }).trim().split("\n").pop()}`);
 
 if (!install) { console.log(`6/6 done: ${app}`); process.exit(0); }
 console.log("6/6 install to /Applications");

@@ -57,6 +57,7 @@ try {
   const evs = (turn) => C.find("turn.event", (p) => p.turn_id === turn).map((n) => n.params);
   const finished = (turn) => evs(turn).some((e) => ["completed", "failed", "interrupted"].includes(e.type));
   const wid = (await C.call("workspace.add", { path: proj })).result.workspace.id;
+  await C.call("settings.set", { patch: { default_mode: "supervised" } }); // approval checks (the default is now Auto)
   const run = async (text) => (await C.call("turn.submit", { workspace_id: wid, text })).result.turn_id;
   const system = () => llm.requests.at(-1).system;
 

@@ -39,6 +39,12 @@ const api = {
   closeWindow: (): void => ipcRenderer.send(CH.CLOSE_WINDOW),
   showWindow: (): void => ipcRenderer.send(CH.SHOW_WINDOW),
 
+  mobile: {
+    status: () => ipcRenderer.invoke(CH.MOBILE_DEVICES, "status"),
+    pair: () => ipcRenderer.invoke(CH.MOBILE_DEVICES, "pair"),
+    revoke: (id: string) => ipcRenderer.invoke(CH.MOBILE_DEVICES, "revoke", id),
+  },
+
   /** Electron/Chromium/Node versions, for the About/diagnostics view. */
   versions: { ...process.versions },
 } as const;
@@ -58,6 +64,14 @@ export type OpscodeBridge = typeof api;
   /** A JPEG data URL (at most `width` px wide) of a Browser tab's page, or null when it cannot be seen. */
   frame(wcId: number, width: number, rect: { x: number; y: number; width: number; height: number } | null): Promise<{ url: string; title: string; image: string } | null> {
     return ipcRenderer.invoke(CH.BROWSER_FRAME, wcId, width, rect);
+  },
+};
+
+// The notch: the window says which chat is on screen (it counts as seen) and opens the chats the notch asks for.
+(api as Record<string, unknown>).notch = {
+  viewing(chatId: string | null): void { ipcRenderer.send(CH.NOTCH_VIEWING, chatId); },
+  onOpen(cb: (target: { chat_id?: string; workspace_id?: string; draft?: string; newchat?: boolean }) => void): void {
+    ipcRenderer.on(CH.NOTCH_OPEN, (_e, target) => cb(target));
   },
 };
 

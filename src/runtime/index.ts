@@ -2,7 +2,9 @@
 // reads it, opens the settings store, starts the session server on loopback,
 // prints READY_LINE, and exits cleanly on SIGTERM or if its parent disappears.
 
-import { createReadStream } from "node:fs";
+import { homedir } from "node:os";
+import { execFile } from "node:child_process";
+import { createReadStream, existsSync } from "node:fs";
 import { READY_LINE, type Bootstrap } from "../shared/protocol";
 import { buildMethods } from "./methods";
 import { startServer } from "./server";
@@ -13,6 +15,7 @@ import { ProviderStore } from "./agent/providers";
 import { rootOf } from "./paths";
 import { McpManager } from "./mcp";
 import { ComputerStore, computerTools, makeDriver } from "./computer";
+import { Hands, ReplayStore, handsBin, handsDir, handsTools, parseInstant, runInstant, runReplay, type Step } from "./hands";
 import { MemoryStore } from "./memory";
 import { ChatStore } from "./chats";
 import { PluginStore } from "./plugins";
@@ -33,6 +36,7 @@ import { LimitsStore } from "./engines/limits";
 import { AccountStore } from "./engines/accounts";
 import { UsageService } from "./usage";
 import { LibraryService } from "./library";
+import { LeadsService } from "./leads";
 import type { Tool } from "./agent/tools";
 import { EchoEngine, TurnManager } from "./turns";
 import { ChiefManager } from "./chief/manager";
@@ -40,6 +44,7 @@ import { CHIEF_MCP_PATH, chiefMcpHandler } from "./chief/mcp";
 import { DeviceBridge } from "./devices/bridge";
 import { browserTools } from "./devices/browser";
 import { IosSimulators, iosTool } from "./devices/ios";
+import { askTool } from "./ask";
 import { DEVICES_MCP_PATH, DeviceGrants, devicesMcpHandler } from "./devices/mcp";
 import type { ToolScope } from "./turns";
 import { WorkspaceStore } from "./workspaces";
@@ -101,18 +106,65 @@ async function main(): Promise<void> {
   const chats = new ChatStore(boot.stateDir);
   // What happened in each chat, for hand-offs between engines (docs/cross-engine-handoff-plan.md).
   const ledger = new LedgerStore(boot.stateDir, log);
-  // Voice input: Apple's on-device speech recognition through native/opscode-voice (started on first use).
+  // Local voice input: Whisper Large-v3 Turbo Q5.
   const voice = new VoiceService((n) => broadcastRef(n), log, boot.stateDir);
-  // Read aloud: Pocket TTS in a worker process, started on first use (src/runtime/tts).
+  // Read aloud: Kitten TTS in a worker process, started on first use (src/runtime/tts).
   const tts = new TtsService(boot.stateDir, (n) => broadcastRef(n), log);
   try { const gone = ledger.sweep(new Set(chats.list().map((c) => c.id))); if (gone) log(`ledger: removed ${gone} of deleted chats`); } catch (e) { log(`ledger sweep failed: ${String(e)}`); }
   const plugins = new PluginStore(boot.stateDir);
   const computer = { store: new ComputerStore(boot.stateDir), driver: makeDriver() };
+  // Computer use through Accessibility (native opscode-hands): read apps as numbered lists, act by number, only risky steps ask.
+  const hb = handsBin();
+  const hands = hb ? new Hands(hb, handsDir(boot.stateDir)) : undefined;
+  const replays = new ReplayStore(handsDir(boot.stateDir));
+  // Whether the helper can read apps (the Accessibility permission), checked at most every 20 s.
+  let axKnown: { ok: boolean; at: number } | undefined;
+  // Every step on the Mac is announced (computer.act) so the windows can show it: the glow around the screen, the frame
+  // around the app being used, the live line in the notch.
+  let broadcastAct: (params: Record<string, unknown>) => void = () => {};
+  const computerAct = (source: Record<string, unknown>) => ({
+    onAct: (summary: string, at?: { app?: string; pid?: number }) => broadcastAct({ ...source, phase: "start", summary, ...(at?.app ? { app: at.app } : {}), ...(at?.pid ? { pid: at.pid } : {}) }),
+    onTarget: (at: { app?: string; pid?: number; ok: boolean; error?: string }) => broadcastAct({ ...source, phase: "end", ok: at.ok, ...(at.error ? { error: at.error } : {}), ...(at.app ? { app: at.app } : {}), ...(at.pid ? { pid: at.pid } : {}) }),
+  });
+  // Steps of the chats started as "do this on my Mac" (computer.task), kept to learn the task when it worked.
+  const chatSteps = new Map<string, { step: Step; ok: boolean }[]>();
+  /**
+   * The person pressed Allow…: ask macOS for Accessibility. An entry left by an older build (a different signature) shows as ON in
+   * System Settings but macOS no longer applies it; when Accessibility is not working, Opscode's own entry is removed first so the
+   * prompt creates a fresh one that matches this build, then the Accessibility page is opened to turn it on.
+   */
+  const askAccess = async (pane: "accessibility" | "screen" = "accessibility"): Promise<boolean> => {
+    if (!hands) return false;
+    const real = process.platform === "darwin" && process.env.OPSCODE_COMPUTER_DRIVER !== "mock";
+    if (pane === "screen") {
+      // Same repair for Screen Recording: an entry from an older build shows as ON but is not applied.
+      if ((await hands.check()).screen === true) return true;
+      if (real) await new Promise<void>((resolve) => execFile("/usr/bin/tccutil", ["reset", "ScreenCapture", "com.opscode.app"], () => resolve()));
+      const s = await hands.run("check", ["ask-screen"], undefined, 8000);
+      const got = s.ok && s.screen === true;
+      if (!got && real) await new Promise<void>((resolve) => execFile("/usr/bin/open", ["x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"], () => resolve()));
+      return got;
+    }
+    if (await handsReady(true)) return true;
+    if (real) await new Promise<void>((resolve) => execFile("/usr/bin/tccutil", ["reset", "Accessibility", "com.opscode.app"], () => resolve()));
+    const r = await hands.run("check", ["ask-access"], undefined, 8000);
+    const ok = r.ok && r.accessibility === true;
+    axKnown = { ok, at: Date.now() };
+    if (!ok && real) await new Promise<void>((resolve) => execFile("/usr/bin/open", ["x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"], () => resolve()));
+    return ok;
+  };
+  const handsReady = async (force = false): Promise<boolean> => {
+    if (!hands) return false;
+    if (!force && axKnown && Date.now() - axKnown.at < 20_000) return axKnown.ok;
+    const r = await hands.check();
+    axKnown = { ok: r.ok && r.accessibility === true, at: Date.now() };
+    return axKnown.ok;
+  };
   const skillset = new SkillSet(boot.stateDir, plugins, (wid) => workspaces.get(wid));
   // Opscode's small built-in skills (fix-bug, check-on-screen, server-change), added once when missing.
   try { seedBuiltinSkills(skillset.userDir); } catch (e) { log(`built-in skills not written: ${String(e)}`); }
   const branchRules = new BranchRules(boot.stateDir);
-  const skillFinder = new SkillFinder(boot.stateDir, skillset.userDir, log);
+  const skillFinder = new SkillFinder(boot.stateDir, skillset.userDir, log, undefined, undefined, { projectSkillsDir: (wid, create) => skillset.projectDir(wid, create), changed: () => broadcastRef({ method: "skill.changed", params: {} }) });
   try { skillFinder.startSweeping(); } catch (e) { log(`skill finder sweep failed: ${String(e)}`); }
   const engines = new EngineStore(boot.stateDir);
   // Who is signed in to Claude Code and Codex, and the extra accounts (each in its own private folder).
@@ -155,9 +207,10 @@ async function main(): Promise<void> {
     return m;
   }, () => accounts.homes());
   const library = new LibraryService(boot.stateDir, (method, params) => broadcastRef({ method, params }));
+  const leads = new LeadsService(boot.stateDir);
   const agentSet = new AgentSet(boot.stateDir, (wid) => workspaces.get(wid));
   let broadcastRef: (n: { method: string; params?: unknown }) => void = () => {};
-  const mcp = new McpManager(boot.stateDir, boot.stateDir, () => broadcastRef({ method: "mcp.changed", params: { servers: mcp.list() } }));
+  const mcp = new McpManager(boot.stateDir, boot.stateDir, () => broadcastRef({ method: "mcp.changed", params: { servers: mcp.list() } }), (id, ok, error) => broadcastRef({ method: "mcp.oauth.done", params: { id, ok, ...(error ? { error } : {}) } }), (line) => log(line));
   const echo = new EchoEngine();
   const agent = new AgentEngine(() => {
     const c = providers.active();
@@ -187,23 +240,38 @@ async function main(): Promise<void> {
       simsRef = sims;
       sims?.hasDevices(); // learn early whether any simulator exists
       if (sims) sims.onActivity = (udid, label) => hub.broadcast({ method: "ios.activity", params: { udid, label } });
-      const deviceTools = (scope: ToolScope): Tool[] => [...(devices.available() ? browserTools(devices, scope) : []), ...(sims?.hasDevices() ? [iosTool(sims, scope)] : []), ...skillFinderTools(skillFinder, scope), checkpointTool(ledger, scope), imageTool(imageGen)];
+      // The base tools every chat gets (browser, simulators, skills, checkpoints, images).
+      const baseTools = (scope: ToolScope): Tool[] => [...(devices.available() ? browserTools(devices, scope) : []), ...(sims?.hasDevices() ? [iosTool(sims, scope)] : []), ...skillFinderTools(skillFinder, scope), checkpointTool(ledger, scope), imageTool(imageGen), askTool()];
+      // The person's own MCP servers (Firecrawl, TinyFish, GitHub, ...) as Opscode tools: one definition for every model. Approvals follow the
+      // chat's permission mode, the same for the built-in agent (any provider) and for Claude Code and Codex.
+      const userMcpTools = (short: boolean): Tool[] => mcp.agentTools(short).map(({ name, server, tool }) => ({
+        def: { name, description: `(MCP) ${tool.description}`.slice(0, 1000), schema: tool.inputSchema },
+        kind: "mcp",
+        describe: (i) => ({ summary: name.replace(/^mcp__/, "").replace("__", " · "), detail: JSON.stringify(i, null, 2).slice(0, 2000) }),
+        run: async (i, { signal }) => {
+          const r = await mcp.call(server, tool.name, i, signal);
+          return { output: r.text, is_error: r.is_error };
+        },
+      }) as Tool);
+      // Claude Code and Codex reach the base tools and the MCP servers through Opscode's own MCP endpoint. (Every turn awaits mcpTools first,
+      // which connects the servers, so they are ready by the time this list is read; nothing is started at launch.)
+      const deviceTools = (scope: ToolScope): Tool[] => [...baseTools(scope), ...userMcpTools(true)];
       const mcpTools = async (scope: ToolScope): Promise<Tool[]> => {
         await mcp.ensureReady();
         // Fresh per turn: the tools remember the size of their last screenshot.
-        const own: Tool[] = computer.driver && computer.store.enabled() ? computerTools(computer.driver, computer.store) : [];
-        return [...own, ...deviceTools(scope), ...mcp.agentTools().map(({ name, server, tool }) => ({
-          def: { name, description: `(MCP) ${tool.description}`.slice(0, 1000), schema: tool.inputSchema },
-          kind: "mcp",
-          describe: (i) => ({ summary: name.replace(/^mcp__/, "").replace("__", " · "), detail: JSON.stringify(i, null, 2).slice(0, 2000) }),
-          run: async (i, { signal }) => {
-            const r = await mcp.call(server, tool.name, i, signal);
-            return { output: r.text, is_error: r.is_error };
-          },
-        }) as Tool)];
+        // With the Accessibility helper: the numbered-list tools (only risky steps ask) plus a screenshot for questions about how
+        // something looks. Without it: the older screenshot-and-position tools (each action asks).
+        let own: Tool[] = [];
+        if (computer.store.enabled()) {
+          if (hands && await handsReady()) {
+            const shot = computer.driver ? computerTools(computer.driver, computer.store).filter((t) => t.def.name === "computer_screenshot") : [];
+            own = [...handsTools(hands, computer.store, { key: scope.chatId, ...computerAct({ source: "chat", chat_id: scope.chatId }), onStep: (step, ok) => chatSteps.get(scope.chatId)?.push({ step, ok }) }), ...shot];
+          } else if (computer.driver) own = computerTools(computer.driver, computer.store);
+        }
+        return [...own, ...baseTools(scope), ...userMcpTools(false)];
       };
       const memoryOn = (): boolean => settings.get().memory_enabled;
-      turns = new TurnManager({ ledger, accounts: { resolve: (e, c) => accounts.resolve(e, c), touch: (e, id) => accounts.touch(e, id), authFailed: (e, id) => void accounts.invalidate(e, id) }, autoSwitch: new AutoSwitch({ enabled: () => engines.settings().auto_switch, installed: (e) => !!(e === "claude-code" ? engines.claudePath() : engines.codexPath()), limits: () => limits.all(), limitsFor: (e, id) => limits.forAccount(e, id ?? "default"), accountOf: (e, c) => accounts.resolve(e, c) }), branches: branchRules, turnEnded: (chatId) => { skillFinder.touch(chatId); }, chatDeleted: (chatId) => { skillFinder.chatGone(chatId); }, agents: { catalog: (wid) => agentSet.list(wid).map((x) => ({ name: x.name, description: x.description })), get: (wid, name) => { const a = agentSet.get(wid, name); return a ? { name: a.def.name, access: a.def.access, body: a.def.body } : undefined; } }, skills: { catalog: (wid) => skillset.list(wid).map((x) => ({ name: x.name, description: x.description })), read: (wid, name) => skillset.get(wid, name)?.body, files: (wid) => skillset.files(wid) }, chats, defaultMode: () => settings.get().default_mode, extraTools: mcpTools, devices: { tools: deviceTools, grants: deviceGrants, url: () => `http://127.0.0.1:${boot.port}${DEVICES_MCP_PATH}` }, memory: {
+      turns = new TurnManager({ ledger, noAsk: (c) => (voiceAgent?.isWorkerChat(c.id) ? "Nobody can answer now: the person is talking with the voice agent, which reads your reply. Put the open question at the end of your reply." : undefined), accounts: { resolve: (e, c) => accounts.resolve(e, c), touch: (e, id) => accounts.touch(e, id), authFailed: (e, id) => void accounts.invalidate(e, id) }, autoSwitch: new AutoSwitch({ enabled: () => engines.settings().auto_switch, installed: (e) => !!(e === "claude-code" ? engines.claudePath() : engines.codexPath()), limits: () => limits.all(), limitsFor: (e, id) => limits.forAccount(e, id ?? "default"), accountOf: (e, c) => accounts.resolve(e, c) }), branches: branchRules, turnEnded: (chatId) => { skillFinder.touch(chatId); }, chatDeleted: (chatId) => { skillFinder.chatGone(chatId); }, agents: { catalog: (wid) => agentSet.list(wid).map((x) => ({ name: x.name, description: x.description })), get: (wid, name) => { const a = agentSet.get(wid, name); return a ? { name: a.def.name, access: a.def.access, body: a.def.body } : undefined; } }, skills: { catalog: (wid) => skillset.list(wid).map((x) => ({ name: x.name, description: x.description })), read: (wid, name) => skillset.get(wid, name)?.body, files: (wid) => skillset.files(wid) }, chats, defaultMode: () => settings.get().default_mode, extraTools: mcpTools, devices: { tools: deviceTools, grants: deviceGrants, url: () => `http://127.0.0.1:${boot.port}${DEVICES_MCP_PATH}` }, memory: {
         prompt: (wid) => (memoryOn() ? memory.promptFor(wid) : ""),
         saveDraft: (wid, title, body) => {
           if (!memoryOn()) throw new Error("memory is turned off in Settings");
@@ -215,13 +283,60 @@ async function main(): Promise<void> {
       const t = terminals;
       const tm = turns;
       // Voice mode: a front agent you talk to that briefs the worker chat (src/runtime/voiceagent, docs/voice-mode-plan.md).
+      broadcastAct = (params) => hub.broadcast({ method: "computer.act", params });
       voiceAgent = new VoiceAgentService({
         broadcast: hub.broadcast, log, voice, tts, turns: tm, chats,
+        // The person's Mac for voice mode: the same tools, instant commands and learned tasks as chats.
+        ...(hands ? { computer: {
+          ready: async () => computer.store.enabled() && await handsReady(),
+          status: async () => ({ on: computer.store.enabled(), accessibility: await handsReady() }),
+          setup: async () => {
+            computer.store.setEnabled(true);
+            hub.broadcast({ method: "computer.changed", params: {} });
+            axKnown = undefined;
+            if (await handsReady()) return "Computer use is on and Accessibility is already allowed. It works from the next voice session (say End, then start again).";
+            // macOS's own prompt adds Opscode to the Accessibility list (the person only flips the switch).
+            if (await askAccess()) return "Computer use is on and Accessibility is allowed. It works from the next voice session (say End, then start again).";
+            return "Computer use is on. System Settings → Accessibility is open: the person must turn on Opscode there themselves, then start voice mode again.";
+          },
+          tools: (o) => handsTools(hands, computer.store, { key: o.key, onStep: o.onStep, onAct: (summary, at) => { o.onAct(summary); computerAct({ source: "voice" }).onAct(summary, at); }, onTarget: computerAct({ source: "voice" }).onTarget }),
+          instant: async (text) => {
+            const cmd = parseInstant(text);
+            if (!cmd) return null;
+            // Opening, quitting or switching apps is the person's own command: it needs neither the Computer use switch nor
+            // Accessibility (only clicking and typing inside apps do).
+            broadcastAct({ source: "voice", phase: "start", summary: cmd.say, app: cmd.target });
+            const r = await runInstant(hands, computer.store, cmd);
+            broadcastAct({ source: "voice", phase: "end", ok: r.ok, app: cmd.target });
+            return r;
+          },
+          replay: async (text, onAct) => {
+            const r = replays.find(text);
+            if (!r || !computer.store.enabled() || !(await handsReady())) return null;
+            const res = await runReplay(hands, computer.store, r, (what) => { onAct(what); broadcastAct({ source: "voice", phase: "start", summary: what }); });
+            broadcastAct({ source: "voice", phase: "end", ok: res.ok });
+            if (!res.ok) return { ok: false, say: "" };
+            replays.used(r.phrase);
+            return { ok: true, say: "Done." };
+          },
+          learn: (text, steps) => replays.learn(text, steps as { step: Step; ok: boolean }[]),
+        } } : {}),
         workspace: (id) => workspaces.get(id), rootOf, settings: () => settings.get(),
+        // Voice mode works across every project, and can add a folder as a new one after the person says yes.
+        workspaces: () => workspaces.list(),
+        addWorkspace: (path) => {
+          const r = workspaces.add(path);
+          if (r.created) hub.broadcast({ method: "workspace.changed", params: { workspaces: workspaces.list() } });
+          return r.workspace;
+        },
+        engines: () => engines.cached(),
+        apiModel: () => providers.active()?.model,
+        // Tests point the folder tools at a temporary home folder.
+        home: () => process.env.OPSCODE_VOICE_HOME || homedir(),
         mcpUrl: () => `http://127.0.0.1:${boot.port}${CHIEF_MCP_PATH}`,
         memory: (wid) => (memoryOn() ? memory.promptFor(wid) : ""),
         defaultEngine: () => { const e = engines.settings(); return { engine: e.default_engine, ...(e.default_model ? { model: e.default_model } : {}), ...(e.default_effort ? { effort: e.default_effort } : {}) }; },
-        engineProblem: (e) => e === "api" ? (providers.active() ? undefined : "No API key is set up (Settings → Models & keys).") : engines.pathOf(e as "claude-code" | "codex" | "antigravity" | "qoder") ? undefined : `${ENGINE_NAMES[e as "claude-code" | "codex" | "antigravity" | "qoder"] ?? e} is not installed on this Mac.`,
+        engineProblem: (e) => e === "api" ? (providers.active() ? undefined : "No API key is set up (Settings → Models & keys).") : (() => { const p = engines.pathOf(e as "claude-code" | "codex" | "antigravity" | "qoder"); return !!p && existsSync(p); })() ? undefined : `${ENGINE_NAMES[e as "claude-code" | "codex" | "antigravity" | "qoder"] ?? e} is not installed on this Mac.`,
         // The voice agent opens and reads pages itself; "full" here only switches off the worker's approval cards, which a
         // hidden chat could not show. voiceagent/browser.ts adds its own rule for sites outside this computer.
         browser: (workspaceId, chatId) => (devices.available() ? browserTools(devices, { workspaceId, chatId, mode: () => "full" }) : undefined),
@@ -282,7 +397,7 @@ async function main(): Promise<void> {
       cm.startTicker(Number(process.env.OPSCODE_CHIEF_TICK_MS) || undefined);
       hub.onHttp(CHIEF_MCP_PATH, chiefMcpHandler((token) => cm.toolsFor(token) ?? voiceAgent?.toolsFor(token), boot.appVersion));
       hub.onSessionClosed((sessionId) => t.sessionClosed(sessionId));
-      return buildMethods({ branches: branchRules, version: boot.appVersion, settings, workspaces, terminals: t, turns, providers, memory, chats, plugins, skillset, agents: agentSet, actions: new ActionStore(boot.stateDir), engines: { store: engines, codex: codexEngine, acp: acpEngines, refresher: engineRefresher, limits, accounts }, imageGen, usage, library, automations: () => automations as AutomationRunner, chief: () => chief as ChiefManager, mcp, computer, voice, tts, voiceAgent: () => voiceAgent as VoiceAgentService, devices: () => devicesRef as DeviceBridge, ios: () => simsRef, broadcast: hub.broadcast });
+      return buildMethods({ branches: branchRules, version: boot.appVersion, settings, workspaces, terminals: t, turns, providers, memory, chats, plugins, skillset, agents: agentSet, actions: new ActionStore(boot.stateDir), engines: { store: engines, codex: codexEngine, acp: acpEngines, refresher: engineRefresher, limits, accounts }, imageGen, usage, library, leads, automations: () => automations as AutomationRunner, chief: () => chief as ChiefManager, mcp, computer, hands: { hands, replays, ready: handsReady, askAccess, known: (ok: boolean) => { axKnown = { ok, at: Date.now() }; }, steps: chatSteps, act: (p: Record<string, unknown>) => broadcastAct(p) }, voice, tts, voiceAgent: () => voiceAgent as VoiceAgentService, devices: () => devicesRef as DeviceBridge, ios: () => simsRef, broadcast: hub.broadcast });
     },
     log,
   );

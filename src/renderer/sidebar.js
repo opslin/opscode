@@ -64,9 +64,9 @@ export function createProjects(ctx) {
 
   const chatRow = (c, nested = false) => {
     const worker = !!c.chief && c.chief.role !== "home";
-    const st = worker ? workerState(c) : state.running.has(c.id) ? "running" : "";
+    const st = worker ? workerState(c) : state.waiting.has(c.id) ? "needs" : state.running.has(c.id) ? "running" : "";
     const label = c.title || "New chat";
-    return h("div", { class: `sidebar-item sb-chat${nested ? " sb-nested" : ""}`, role: "button", tabindex: 0, title: worker ? `${label} · ${WORKER[st]}` : label, dataset: { chat: c.id, ...(worker ? { state: st } : {}) }, "aria-current": String(current(c)),
+    return h("div", { class: `sidebar-item sb-chat${nested ? " sb-nested" : ""}`, role: "button", tabindex: 0, title: worker || st === "needs" ? `${label} · ${WORKER[st]}` : label, dataset: { chat: c.id, ...(worker || st === "needs" ? { state: st } : {}) }, "aria-current": String(current(c)),
       onclick: () => ctx.selectChat(c.id), onkeydown: (e) => key(e, () => ctx.selectChat(c.id)) },
       st === "running" ? h("span", { class: "spin", title: "Working…" }) : st ? h("span", { class: "sb-state", dataset: { s: st }, title: WORKER[st] }) : null,
       h("span", { class: "sidebar-label" }, label),

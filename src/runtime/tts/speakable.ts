@@ -1,4 +1,4 @@
-// Turns a reply's markdown into text worth reading aloud, cut into sentences for the voice (Pocket TTS makes
+// Turns a reply's markdown into text worth reading aloud, cut into sentences for the voice (the voice makes
 // one sentence at a time, so audio starts after the first one). Pure: no model, no I/O.
 //   - code blocks are skipped (one short phrase says so), inline code is read as its words, long ones as "code"
 //   - links read as their label, bare URLs as "link", file paths as the file's name
@@ -78,7 +78,7 @@ export function toSentences(text: string): string[] {
   for (const para of text.split(/\n{1,}/)) {
     const p = para.trim();
     if (!p) continue;
-    const parts = p.split(/(?<=[.!?…])["')\]]*\s+(?=["'(\[]?[A-Z0-9₹$])/);
+    const parts = p.split(/(?<=[.!?…।॥。！？])["')\]]*\s+(?=["'(\[]?[\p{Lu}\p{Lt}\p{Lo}\p{N}₹$])|(?<=[।॥。！？])(?=\p{L})/u);
     let acc = "";
     for (const part of parts) {
       acc = acc ? `${acc} ${part}` : part;
@@ -140,7 +140,7 @@ export class SentenceStream {
   }
 
   private cut(): number {
-    const re = /(?<=[.!?…])["')\]]*\s+(?=["'(\[]?[A-Z0-9₹$])|\n+/g;
+    const re = /(?<=[.!?…।॥。！？])["')\]]*\s+(?=["'(\[]?[\p{Lu}\p{Lt}\p{Lo}\p{N}₹$])|(?<=[।॥。！？])(?=\p{L})|\n+/gu;
     let m: RegExpExecArray | null;
     while ((m = re.exec(this.buf))) {
       const before = this.buf.slice(0, m.index + (m[0].startsWith("\n") ? 0 : m[0].length)).trim();

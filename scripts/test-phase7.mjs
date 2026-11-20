@@ -54,7 +54,7 @@ try {
   t.check("no chats at first", res.result?.chats?.length === 0, why(res));
   res = await C.call("chat.create", { workspace_id: wA });
   const c1 = res.result?.chat;
-  t.check("chat.create uses the default mode (supervised)", c1?.mode === "supervised" && c1.workspace_id === wA && c1.title === "", why(res));
+  t.check("chat.create uses the default mode (auto)", c1?.mode === "auto" && c1.workspace_id === wA && c1.title === "", why(res));
   res = await C.call("chat.create", { workspace_id: wA, mode: "read" });
   const c2 = res.result?.chat;
   t.check("chat.create with a mode", c2?.mode === "read", why(res));
@@ -150,7 +150,7 @@ try {
   step(textEv("looking"));
   let turn = await submit(c2.id, "mode read");
   await waitFor(() => finished(turn), 8000);
-  t.check("read mode offers only read tools (and run_agent, whose helpers are read-only there; skill_find only searches; task_checkpoint only saves the plan)", JSON.stringify(toolNames()) === JSON.stringify(["list_dir", "read_file", "run_agent", "save_note", "skill_find", "task_checkpoint", "use_skill"]), toolNames().join(","));
+  t.check("read mode offers only read tools (and run_agent, whose helpers are read-only there; skill_find only searches; task_checkpoint only saves the plan; ask_user only asks the person)", JSON.stringify(toolNames()) === JSON.stringify(["ask_user", "list_dir", "read_file", "run_agent", "save_note", "skill_find", "task_checkpoint", "use_skill"]), toolNames().join(","));
   step(toolEv("w1", "write_file", { path: "nope.txt", content: "x" }));
   step(textEv("ok"));
   turn = await submit(c2.id, "write anyway");

@@ -33,6 +33,7 @@ try {
   const finished = (turn) => evs(turn).some((e) => ["completed", "failed", "interrupted"].includes(e.type));
   const text = (turn) => evs(turn).filter((e) => e.type === "delta").map((e) => e.text).join("");
   const wid = (await C.call("workspace.add", { path: proj })).result.workspace.id;
+  await C.call("settings.set", { patch: { default_mode: "supervised" } }); // approval checks (the default is now Auto)
   const submit = async (chat, txt) => (await C.call("turn.submit", { workspace_id: wid, chat_id: chat.id, text: txt })).result.turn_id;
   const meta = async (id) => (await C.call("chat.list", {})).result.chats.find((c) => c.id === id);
   const run = async (chat, txt, ms = 8000) => { const turn = await submit(chat, txt); await waitFor(() => finished(turn), ms); return turn; };
@@ -140,12 +141,13 @@ try {
   await C.call("turn.approve", { turn_id: turn, call_id: "exec-1", allow: false });
   await waitFor(() => finished(turn), 6000);
   t.check("after Deny Codex does not run it", !existsSync(join(proj, "from-codex.txt")) && text(turn).includes("Not run."));
-  for (const [mode, sandbox, approval] of [["read", "read-only", "never"], ["auto_edits", "workspace-write", "untrusted"], ["full", "workspace-write", "never"]]) {
+  for (const [mode, sandbox, approval, turnSandbox] of [["read", "read-only", "never", "readOnly"], ["auto_edits", "workspace-write", "untrusted", "workspaceWrite"], ["auto", "danger-full-access", "untrusted", "dangerFullAccess"], ["full", "danger-full-access", "never", "dangerFullAccess"]]) {
     clear();
     await C.call("chat.set_mode", { chat_id: chat.id, mode });
     await run(chat, "hi");
     const r = entries().find((e) => e.method === "thread/resume");
-    t.check(`${mode} -> Codex sandbox ${sandbox}, approvals ${approval}`, r?.params.sandbox === sandbox && r.params.approvalPolicy === approval, JSON.stringify(r?.params));
+    const ts = entries().find((e) => e.method === "turn/start");
+    t.check(`${mode} -> Codex sandbox ${sandbox}, approvals ${approval}, turn sandbox ${turnSandbox}`, r?.params.sandbox === sandbox && r.params.approvalPolicy === approval && ts?.params.sandboxPolicy?.type === turnSandbox, JSON.stringify({ resume: r?.params, turn: ts?.params.sandboxPolicy }));
   }
   turn = await submit(chat, "hang please");
   await waitFor(() => text(turn).includes("Thinking"), 6000);

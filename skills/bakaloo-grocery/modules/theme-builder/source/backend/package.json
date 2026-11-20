@@ -1,0 +1,20 @@
+{
+  "name": "bakaloo-theme-backend",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "migrate": "node src/database/migrate.js",
+    "test": "node --test"
+  },
+  "type": "module",
+  "dependencies": {
+    "@fastify/multipart": "8.3.1",
+    "fastify": "4.29.1",
+    "fastify-plugin": "4.5.1",
+    "pg": "8.18.0"
+  }
+}

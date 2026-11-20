@@ -87,6 +87,8 @@ export type TurnEventType =
   | "tool_end"
   | "approval_request"
   | "approval_resolved"
+  | "question"
+  | "question_answered"
   | "handoff";
 
 /** A turn that started on a different engine than the chat's last one: what the new engine was given. */
@@ -103,7 +105,41 @@ export interface HandoffInfo {
   reason?: "limit";
 }
 
-export type ToolStatus = "awaiting_approval" | "running" | "done" | "error" | "denied";
+/** A card with more than one way to say yes (for example where a skill is installed). */
+export interface ApprovalChoice {
+  id: string;
+  label: string;
+  hint?: string;
+}
+
+export type ToolStatus = "awaiting_approval" | "awaiting_answer" | "running" | "done" | "error" | "denied";
+
+/** One option of a question card. */
+export interface AskOption {
+  label: string;
+  description?: string;
+}
+
+/** One question on a question card (an agent asking the person to choose). */
+export interface AskQuestion {
+  id: string;
+  /** A short title chip, e.g. "Deploy". */
+  header?: string;
+  question: string;
+  options: AskOption[];
+  /** Several options may be picked. */
+  multi?: boolean;
+}
+
+/** The person's answer to one question: the labels picked and/or their own words. */
+export interface AskAnswer {
+  id: string;
+  picks: string[];
+  other?: string;
+}
+
+/** Limits for question cards (what an agent may ask at once). */
+export const ASK_LIMITS = { QUESTIONS: 4, OPTIONS: 4, LABEL: 120, DESCRIPTION: 300, QUESTION: 600, HEADER: 40, OTHER: 4000 } as const;
 
 /** One ordered piece of an assistant reply: prose or a tool call. */
 export type MessagePart =
@@ -120,6 +156,12 @@ export type MessagePart =
       output?: string;
       /** Set while the person is asked about creating a new git branch. */
       branch?: { names: string[]; current: string };
+      /** Set while the person is asked to pick one of several ways to say yes. */
+      choices?: ApprovalChoice[];
+      /** A question card: what the agent asked, and (once answered) what the person chose. */
+      questions?: AskQuestion[];
+      answers?: AskAnswer[];
+      skipped?: boolean;
     };
 
 /** Broadcast as the `turn.event` notification. `seq` orders events within a turn. */
@@ -139,6 +181,12 @@ export interface TurnEvent {
   detail?: string;
   /** approval_request: this is a question about creating a new git branch. */
   branch?: { names: string[]; current: string };
+  /** approval_request: the card offers these ways to say yes. */
+  choices?: ApprovalChoice[];
+  /** question / question_answered: */
+  questions?: AskQuestion[];
+  answers?: AskAnswer[];
+  skipped?: boolean;
   output?: string;
   is_error?: boolean;
   approved?: boolean;
@@ -151,6 +199,9 @@ export interface ChatMessage {
   text: string;
   turn_id: string;
   status: "complete" | "streaming" | "interrupted" | "failed";
+  /** Idempotency metadata for a remotely submitted user message. */
+  request_id?: string;
+  request_hash?: string;
   /** Assistant messages only: text and tool calls in order. `text` is the prose joined. */
   parts?: MessagePart[];
   /** Set when status is "failed". */
@@ -236,9 +287,10 @@ export interface Settings {
   memory_enabled: boolean;
   /** Permission mode a new chat starts in. */
   default_mode: PermissionMode;
-  /** Voice input language (BCP-47, e.g. "en-IN"), or "auto" = the Mac's own language and region. */
+  /** Voice input language (BCP-47, e.g. "en-IN"), or "auto" = detect the spoken language. */
   voice_locale: string;
-  /** Read-aloud voice (Pocket TTS): which voice, and how fast it is played (pitch stays). */
+  /** Kitten speech output language and voice. Auto follows the language of the reply. */
+  tts_locale: string;
   tts_voice: string;
   tts_speed: number;
   /** Voice mode: what the front agent runs on ("" = the chat's own engine), and how long a pause ends what you said. */
@@ -259,9 +311,10 @@ export const DEFAULT_SETTINGS: Settings = {
   text_size: "default",
   density: "comfortable",
   memory_enabled: true,
-  default_mode: "supervised",
+  default_mode: "auto",
   voice_locale: "auto",
-  tts_voice: "bria",
+  tts_locale: "auto",
+  tts_voice: "auto",
   tts_speed: 1,
   voice_brain_engine: "",
   voice_brain_model: "",
@@ -277,10 +330,11 @@ export const DEFAULT_SETTINGS: Settings = {
  *   read        - look around only; no edits, commands or MCP tools
  *   supervised  - edits, commands and MCP tools each ask first
  *   auto_edits  - file edits go ahead; commands and MCP tools ask
+ *   auto        - edits and almost every command go ahead; only risky ones ask (delete, migrate, push, deploy, ...)
  *   full        - everything goes ahead (still inside the project folder)
  */
-export type PermissionMode = "read" | "supervised" | "auto_edits" | "full";
-export const PERMISSION_MODES: readonly PermissionMode[] = ["read", "supervised", "auto_edits", "full"];
+export type PermissionMode = "read" | "supervised" | "auto_edits" | "auto" | "full";
+export const PERMISSION_MODES: readonly PermissionMode[] = ["read", "supervised", "auto_edits", "auto", "full"];
 
 /** Coding agents that run on this computer with the person's own sign-in. Antigravity and Qoder speak ACP (Agent Client Protocol). */
 export type AcpEngineId = "antigravity" | "qoder";
@@ -310,6 +364,9 @@ export interface ChatMeta {
   mode: PermissionMode;
   created_at: string;
   updated_at: string;
+  /** Idempotency metadata for a remotely created conversation. */
+  creation_request_id?: string;
+  creation_request_hash?: string;
   /** Which engine answers: "api" (a provider key), "claude-code", "codex", "antigravity" or "qoder". Absent = "api". */
   engine?: "api" | AgentEngineId;
   model?: string;
@@ -405,6 +462,15 @@ export interface McpServerInfo {
   /** Where it came from: "Claude Code", "Codex", "Cursor" (imported) or a catalog id. */
   source?: string;
   catalog?: string;
-  /** Its last error looks like a missing or wrong key / sign-in. */
+  /** Its last error looks like a missing or wrong key. */
   needs_key?: boolean;
+  /** The server sits behind a browser sign-in. */
+  auth?: "oauth";
+  /** auth "oauth": a sign-in is stored, and whether one is waiting for the browser right now. */
+  signed_in?: boolean;
+  signing_in?: boolean;
+  /** When the stored sign-in runs out (it is renewed by itself when the service allows). */
+  expires_at?: string;
+  /** The server said "sign in first" and there is no sign-in yet. */
+  needs_signin?: boolean;
 }

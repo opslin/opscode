@@ -1,0 +1,28 @@
+name = "opscode-relay"
+main = "build/entry.mjs"
+compatibility_date = "2026-09-01"
+workers_dev = true
+preview_urls = false
+
+[[routes]]
+pattern = "relay.shotlin.in"
+custom_domain = true
+
+[build]
+command = "sh build.sh"
+
+[[durable_objects.bindings]]
+name = "RELAY"
+class_name = "Relay"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Relay"]
+
+[[ratelimits]]
+name = "CONNECT_LIMIT"
+namespace_id = "724031"
+
+  [ratelimits.simple]
+  limit = 60
+  period = 10

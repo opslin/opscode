@@ -15,6 +15,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, r
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as ResEdit from "resedit";
+import { prepareLocalVoice } from "./build-local-voice.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const flag = (f) => process.argv.includes(f);
@@ -33,6 +34,8 @@ mkdirSync(cache, { recursive: true });
 const fetchTo = (url, file) => { if (!existsSync(file)) { console.log(`   downloading ${url.split("/").pop()}`); run("curl", ["-fsSL", "--retry", "3", "-o", `${file}.part`, url]); renameSync(`${file}.part`, file); } return file; };
 
 if (!flag("--no-build")) { console.log("1/7 build"); run("npm", ["run", "build"], { cwd: root, stdio: "inherit" }); } else console.log("1/7 build skipped");
+
+const voiceRuntime = prepareLocalVoice("win32-x64");
 
 console.log(`2/7 Electron ${electronVersion} for Windows`);
 const zipName = `electron-v${electronVersion}-win32-x64.zip`;
@@ -69,6 +72,7 @@ for (const f of readdirSync(join(dir, "locales"))) if (f !== "en-US.pak") rmSync
 console.log("4/7 copy the app");
 const app = join(dir, "resources", "app");
 mkdirSync(app, { recursive: true });
+cpSync(voiceRuntime, join(app, "voice-runtime"), { recursive: true, verbatimSymlinks: true });
 const slim = { name: pkg.name, productName: pkg.productName ?? APP, version: pkg.version, main: pkg.main, type: pkg.type, dependencies: pkg.dependencies };
 writeFileSync(join(app, "package.json"), JSON.stringify(slim, null, 2));
 cpSync(join(root, "dist"), join(app, "dist"), { recursive: true, filter: (src) => !src.includes(`${join("dist", "native")}`) }); // the Swift / Objective-C helpers are Mac-only
@@ -90,7 +94,7 @@ console.log("5/7 the Windows native pieces");
 const pty = join(app, "node_modules", "node-pty");
 for (const sub of ["prebuilds/darwin-arm64", "prebuilds/darwin-x64", "prebuilds/win32-arm64", "build"]) rmSync(join(pty, sub), { recursive: true, force: true });
 if (!existsSync(join(pty, "prebuilds/win32-x64/conpty.node"))) throw new Error("node-pty has no Windows prebuild");
-// sherpa-onnx: the Windows package (speech recognition and the Pocket TTS voice).
+// sherpa-onnx: the Windows package (Silero voice activity detection).
 const tgz = fetchTo(`https://registry.npmjs.org/sherpa-onnx-win-x64/-/sherpa-onnx-win-x64-${sherpaVersion}.tgz`, join(cache, `sherpa-onnx-win-x64-${sherpaVersion}.tgz`));
 const tmp = join(cache, "sherpa-win");
 rmSync(tmp, { recursive: true, force: true });

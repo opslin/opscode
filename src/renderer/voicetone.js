@@ -1,4 +1,4 @@
-// Speed and pitch for the agent's voice. Pocket TTS has no speed or pitch control of its own, so the window changes them
+// Speed and pitch for the agent's voice. The window changes them
 // while playing: a WSOLA time-stretch (overlap-add of short speech frames, each placed where it lines up best with the
 // last one) changes the length without changing the pitch, then the playback rate moves the pitch. Together:
 //   stretch by pitch/speed, play at rate = pitch   ->   length / speed, pitch * pitch

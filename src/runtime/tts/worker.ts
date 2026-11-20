@@ -1,93 +1,46 @@
-// The Pocket TTS worker (read aloud, V3). Runs as its own child process of the runtime so the model's memory
-// (about 750 MB while loaded) is returned to the Mac when it is not needed: the service stops this process after
-// a few idle minutes. Pocket TTS (Kyutai) through sherpa-onnx, on the CPU. Nothing leaves the Mac.
-//
-//   parent -> worker  { t: "init", dir, threads }   { t: "speak", id, text, voice, steps }   { t: "cancel", id }
-//   worker -> parent  { t: "ready", ms, rate }      { t: "audio", id, pcm: Int16Array, rate, ms }
-//                     { t: "cancelled", id }        { t: "error", id?, message }
-// Messages use Node's "advanced" serialization (typed arrays pass as they are).
+// Keeps Kitten loaded in a dedicated process while retaining the app's sentence playback protocol.
+import { LocalVoiceWorker } from "../voice/localRuntime";
 
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+const send = (m: Record<string, unknown>): void => { process.send?.(m); };
+let model: LocalVoiceWorker | undefined;
+let chain = Promise.resolve();
+const pending = new Map<string, { cancelled: boolean }>();
 
-type Wave = { samples: Float32Array; sampleRate: number };
-interface Sherpa {
-  OfflineTts: { createAsync(config: unknown): Promise<Tts> };
-  GenerationConfig: new (o: Record<string, unknown>) => unknown;
-  readWave(file: string, enableExternalBuffer?: boolean): Wave;
-}
-interface Tts { sampleRate: number; generateAsync(o: Record<string, unknown>): Promise<{ samples: Float32Array; sampleRate: number }> }
-
-const send = (m: Record<string, unknown>): void => { try { process.send?.(m); } catch { /* the parent is gone */ } };
-
-let sherpa: Sherpa | undefined;
-let tts: Tts | undefined;
-let dir = "";
-const voices = new Map<string, Wave>();
-const cancelled = new Set<string>();
-let chain: Promise<void> = Promise.resolve();
-
-async function init(d: string, threads: number): Promise<void> {
-  const t0 = Date.now();
-  dir = d;
-  sherpa = require("sherpa-onnx-node") as Sherpa;
-  tts = await sherpa.OfflineTts.createAsync({
-    model: {
-      pocket: {
-        lmFlow: join(d, "lm_flow.int8.onnx"),
-        lmMain: join(d, "lm_main.int8.onnx"),
-        encoder: join(d, "encoder.onnx"),
-        decoder: join(d, "decoder.int8.onnx"),
-        textConditioner: join(d, "text_conditioner.onnx"),
-        vocabJson: join(d, "vocab.json"),
-        tokenScoresJson: join(d, "token_scores.json"),
-        voiceEmbeddingCacheCapacity: 8,
-      },
-      debug: false,
-      numThreads: Math.max(1, Math.min(4, threads)),
-      provider: "cpu",
-    },
-    maxNumSentences: 1,
-  });
-  send({ t: "ready", ms: Date.now() - t0, rate: tts.sampleRate });
-}
-
-function voiceWave(name: string): Wave {
-  const hit = voices.get(name);
-  if (hit) return hit;
-  if (!/^[a-z0-9_-]{1,40}$/i.test(name)) throw new Error(`bad voice name ${name}`);
-  const file = join(dir, "test_wavs", `${name}.wav`);
-  if (!existsSync(file)) throw new Error(`voice ${name} is not installed`);
-  const w = sherpa!.readWave(file, false); // Electron's Node refuses external buffers
-  voices.set(name, w);
-  return w;
-}
-
-async function speak(id: string, text: string, voice: string, steps: number): Promise<void> {
-  if (cancelled.has(id)) { cancelled.delete(id); send({ t: "cancelled", id }); return; }
-  try {
-    if (!tts || !sherpa) throw new Error("the voice is not loaded");
-    const t0 = Date.now();
-    const ref = voiceWave(voice);
-    const cfg = new sherpa.GenerationConfig({ speed: 1.0, referenceAudio: ref.samples, referenceSampleRate: ref.sampleRate, numSteps: steps, extra: { max_reference_audio_len: 10, seed: 42 } });
-    const audio = await tts.generateAsync({ text, enableExternalBuffer: false /* Electron's Node refuses external buffers */, generationConfig: cfg, onProgress: () => (cancelled.has(id) ? 0 : 1) });
-    if (cancelled.has(id)) { cancelled.delete(id); send({ t: "cancelled", id }); return; }
-    const f = audio.samples;
-    const pcm = new Int16Array(f.length);
-    for (let i = 0; i < f.length; i++) pcm[i] = Math.max(-32768, Math.min(32767, Math.round(f[i] * 32767)));
-    send({ t: "audio", id, pcm, rate: audio.sampleRate, ms: Date.now() - t0 });
-  } catch (e) {
-    send({ t: "error", id, message: e instanceof Error ? e.message : String(e) });
-  }
-}
+function close(): void { model?.close(); process.exit(0); }
 
 process.on("message", (m: Record<string, unknown>) => {
   switch (m.t) {
-    case "init": chain = chain.then(() => init(String(m.dir), Number(m.threads) || 2)).catch((e) => send({ t: "error", message: `could not load the voice: ${e instanceof Error ? e.message : String(e)}` })); break;
-    case "speak": chain = chain.then(() => speak(String(m.id), String(m.text), String(m.voice), Number(m.steps) || 5)); break;
-    case "cancel": cancelled.add(String(m.id)); break;
-    case "exit": process.exit(0);
+    case "init":
+      chain = chain.then(async () => {
+        model = new LocalVoiceWorker("kitten", String(m.dir));
+        const result = await model.call({ cmd: "load" });
+        send({ t: "ready", ms: result.ms, rate: 24_000 });
+      }).catch((error) => { send({ t: "error", message: error.message }); });
+      break;
+    case "speak": {
+      const id = String(m.id);
+      const req = { cancelled: false };
+      pending.set(id, req);
+      chain = chain.then(async () => {
+        try {
+          if (req.cancelled) return;
+          if (!model) throw new Error("Kitten TTS is unavailable");
+          const res = await model.call({ cmd: "speak", text: m.text, voice: m.voice, language: m.language, hint: m.hint });
+          if (req.cancelled) return;
+          const bytes = Buffer.from(String(res.pcm ?? ""), "base64");
+          const pcm = new Int16Array(bytes.length / 2);
+          for (let i = 0; i < pcm.length; i++) pcm[i] = bytes.readInt16LE(i * 2);
+          if (!pcm.length) throw new Error("Kitten couldn't pronounce this text in the selected language");
+          send({ t: "audio", id, pcm, rate: res.rate, ms: res.ms });
+        } catch (error) {
+          if (!req.cancelled) send({ t: "error", id, message: error instanceof Error ? error.message : String(error) });
+        } finally { pending.delete(id); }
+      });
+      break;
+    }
+    case "cancel": { const req = pending.get(String(m.id)); if (req) req.cancelled = true; break; }
+    case "exit": close(); break;
   }
 });
-process.on("disconnect", () => process.exit(0));
+process.on("disconnect", close);
 send({ t: "hello" });

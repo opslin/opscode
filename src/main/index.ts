@@ -1,7 +1,7 @@
 // App entry: single-instance lock, scheme registration, runtime supervisor,
 // window + IPC wiring, and orderly shutdown of the runtime on quit.
 
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, ipcMain, Menu, MenuItem } from "electron";
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer as createHttpServer } from "node:http";
 import { execFileSync } from "node:child_process";
@@ -15,6 +15,8 @@ import { RuntimeSupervisor } from "./runtime";
 import { MainRpcClient } from "./rpcClient";
 import { BrowserHost } from "./browserHost";
 import { rendererBridge } from "./rendererBridge";
+import { Notch } from "./notch";
+import { APP_URL, CH, isOwnFrame } from "../shared/ipc";
 
 // Must run before `ready`.
 registerSchemePrivileges();
@@ -29,6 +31,8 @@ const SMOKE_PREFIX = "opscode-smoke-profile-";
 let smokeUserData: string | undefined;
 // The real-model browser test (scripts/realtest-browser.mjs) also runs on a throwaway profile.
 if (process.env.OPSCODE_REALTEST && process.env.OPSCODE_SMOKE_PROFILE) app.setPath("userData", process.env.OPSCODE_SMOKE_PROFILE);
+// Development only: run from source beside the installed app on a separate profile (its own data and single-instance lock).
+if (!app.isPackaged && process.env.OPSCODE_PROFILE) app.setPath("userData", process.env.OPSCODE_PROFILE);
 if (SMOKE) {
   smokeUserData = process.env.OPSCODE_SMOKE_PROFILE;
   if (!smokeUserData) {
@@ -58,6 +62,9 @@ let mainWindow: BrowserWindow | null = null;
 let supervisor: RuntimeSupervisor | null = null;
 let browserHost: BrowserHost | null = null;
 let shuttingDown = false;
+/** Set once the person really quits (⌘Q, the menu): then the window closes instead of hiding. */
+let quitting = false;
+let notch: Notch | null = null;
 
 // The app's own log file (a packaged Windows app has no console): <app data>/logs/opscode.log, 2 MB, one older copy kept.
 let logFile: string | null = null;
@@ -133,6 +140,38 @@ async function runSmoke(win: BrowserWindow, sup: RuntimeSupervisor): Promise<voi
     }
     console.log("OPSCODE_SMOKE: renderer RPC ready (origin + subprotocol auth ok)");
 
+    if (process.env.OPSCODE_SMOKE_FOCUS === "voice-settings") {
+      const result = await win.webContents.executeJavaScript(`(async () => {
+        const until = async (find) => {
+          for (const end = Date.now() + 10000; Date.now() < end;) {
+            const result = await find();
+            if (result) return result;
+            await new Promise((r) => setTimeout(r, 50));
+          }
+          throw new Error("voice settings did not update");
+        };
+        const get = (label) => document.querySelector('select[aria-label="' + label + '"]');
+        (await until(() => document.querySelector('[aria-label="Settings"]'))).click();
+        await until(() => get("Microphone language")?.querySelector('option[value="hi"]') &&
+          get("Spoken reply language")?.querySelector('option[value="hi"]') &&
+          document.querySelector('[data-voice="action"]')?.textContent.includes("575 MB") &&
+          document.querySelector('[data-tts="action"]')?.textContent.includes("Download"));
+        for (const label of ["Microphone language", "Spoken reply language"]) {
+          const select = get(label);
+          select.value = "hi";
+          select.dispatchEvent(new Event("change", { bubbles: true }));
+          await until(() => get(label)?.value === "hi");
+          await new Promise((r) => setTimeout(r, 200));
+        }
+        await until(() => get("Speaking voice")?.querySelector('option[value="hi-priya"]'));
+        return (await window.__opscodeRpc.call("settings.get", {})).settings;
+      })()`);
+      if (result.voice_locale !== "hi" || result.tts_locale !== "hi") throw new Error("Hindi voice settings were not saved");
+      clearTimeout(watchdog);
+      await finish(0, "PASS (voice settings, model controls, and persisted Hindi selections)");
+      return;
+    }
+
     // Crash recovery: kill the runtime; the supervisor must restart it on the
     // same port/token and the renderer client must reconnect by itself.
     const crashedPid = sup.pid;
@@ -179,7 +218,11 @@ async function runSmoke(win: BrowserWindow, sup: RuntimeSupervisor): Promise<voi
       for (const deadline = Date.now() + ms; Date.now() < deadline; await pause(150)) {
         if (await ev<boolean>(code)) return;
       }
-      throw new Error(`renderer did not ${what}`);
+      // Say what the window shows instead, so a failing step can be understood from the log alone.
+      const store = await ev<string>("import('./store.js').then((m) => JSON.stringify({ page: m.state.page, conn: m.state.conn, workspaces: (m.state.workspaces ?? []).length, active: m.state.active })).catch((e) => String(e))").catch(() => "?");
+      console.log(`OPSCODE_SMOKE: store ${store}`);
+      const seen = await ev<string>("JSON.stringify({ title: document.title, sidebar: (document.querySelector('.sidebar') ?? document.body).innerText.slice(0, 300), current: [...document.querySelectorAll('.sidebar-item')].map((e) => (e.getAttribute('aria-current') ?? '-') + ':' + e.textContent.trim().slice(0, 40)).slice(0, 8) })").catch(() => "?");
+      throw new Error(`renderer did not ${what} (window: ${seen})`);
     };
     const click = (text: string, sel = ".pane-tab") =>
       ev(`[...document.querySelectorAll(${JSON.stringify(sel)})].find((e) => e.textContent.trim() === ${JSON.stringify(text)})?.click()`);
@@ -491,9 +534,9 @@ async function runSmoke(win: BrowserWindow, sup: RuntimeSupervisor): Promise<voi
       // Read aloud (renderer/speak.js + runtime/tts; a stand-in voice here): 🔊 on a reply asks before the first
       // download, downloads, then plays; pause/resume, stop and the speed button work.
       const speakBtn = ".chat:not([hidden]) .msg-assistant .msg-speak button:first-child";
-      await until(`!!document.querySelector('${speakBtn}') && document.querySelector('${speakBtn}').title === 'Read aloud (Pocket TTS)'`, "show 🔊 on the reply");
+      await until(`!!document.querySelector('${speakBtn}') && document.querySelector('${speakBtn}').title === 'Read aloud (Kitten TTS 2 Mini)'`, "show 🔊 on the reply");
       await ev(`document.querySelector('${speakBtn}').click()`);
-      await until("!!document.querySelector('.dialog[role=alertdialog]') && /Download the Pocket TTS voice/.test(document.querySelector('.dialog').textContent) && /nothing you listen to is sent anywhere/.test(document.querySelector('.dialog').textContent)", "ask before downloading the voice");
+      await until("!!document.querySelector('.dialog[role=alertdialog]') && /Download the Kitten TTS 2 Mini voice/.test(document.querySelector('.dialog').textContent) && /synthesized on this computer/.test(document.querySelector('.dialog').textContent)", "ask before downloading the voice");
       await shot("05j-voice-download-question");
       await ev("[...document.querySelectorAll('.dialog .btn')].find((b) => /^Download/.test(b.textContent)).click()");
       await until(`document.querySelector('${speakBtn}')?.dataset.phase === 'playing' && document.querySelector('${speakBtn}').title === 'Pause'`, "play the reply after the voice is downloaded", 20_000);
@@ -505,7 +548,7 @@ async function runSmoke(win: BrowserWindow, sup: RuntimeSupervisor): Promise<voi
       await ev(`document.querySelector('${speakBtn}').click()`);
       await until(`document.querySelector('${speakBtn}').dataset.phase === 'playing'`, "resume reading");
       await ev("document.querySelector('.chat:not([hidden]) .msg-assistant .msg-speak button[aria-label=\"Stop reading\"]').click()");
-      await until(`document.querySelector('${speakBtn}').dataset.phase === 'idle' && document.querySelector('${speakBtn}').title === 'Read aloud (Pocket TTS)'`, "stop reading");
+      await until(`document.querySelector('${speakBtn}').dataset.phase === 'idle' && document.querySelector('${speakBtn}').title === 'Read aloud (Kitten TTS 2 Mini)'`, "stop reading");
       await c.call("settings.set", { patch: { tts_speed: 1 } });
       console.log("OPSCODE_SMOKE: read aloud: 🔊 asks first, downloads the voice, plays, pause/resume, speed, stop");
       console.log("OPSCODE_SMOKE: voice: mic fills the box live (project word fixed), click finishes, Esc cancels; voice note keeps the recording as an attachment");
@@ -594,22 +637,22 @@ async function runSmoke(win: BrowserWindow, sup: RuntimeSupervisor): Promise<voi
         await c.call("settings.set", { patch: { voice_brain_engine: "claude-code", voice_brain_model: "sonnet", voice_brain_effort: "" } });
         await ev(`document.querySelector('${vc} .vox-lines').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))`);
         await until(`!document.querySelector('.mp')`, "close the model picker (a click outside it)");
-        // The agent's voice: chip -> panel with the Pocket TTS voices, speed and pitch; picking a voice plays a sample.
-        await until(`getComputedStyle(document.querySelector('${vc} .cmp-voice-tts')).display !== 'none' && /Bria/.test(document.querySelector('${vc} .cmp-voice-tts').textContent)`, "show the agent's voice chip (Bria) in voice mode");
+        // The agent's voice: chip -> panel with the Kitten TTS 2 Mini voices, speed and pitch; picking a voice plays a sample.
+        await until(`getComputedStyle(document.querySelector('${vc} .cmp-voice-tts')).display !== 'none' && /Automatic/.test(document.querySelector('${vc} .cmp-voice-tts').textContent)`, "show the agent's voice chip (Automatic) in voice mode");
         await ev(`document.querySelector('${vc} .cmp-voice-tts').click()`);
-        await until(`document.querySelectorAll('.vtone .vtone-voice').length === 2 && document.querySelectorAll('.vtone .vtone-range').length === 2 && document.querySelector('.vtone').classList.contains('vtone-open')`, "open the voice panel (two voices, speed and pitch)");
-        await ev(`(() => { const r = document.querySelectorAll('.vtone .vtone-range'); r[0].value = '1.15'; r[0].dispatchEvent(new Event('input', { bubbles: true })); r[1].value = '-1.5'; r[1].dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('.vtone .vtone-voice[data-voice="loona"]').click(); })()`);
-        await until(`document.querySelector('.vtone').dataset.previewing === 'true' && /1\\.15×/.test(document.querySelector('.vtone').textContent) && /−1\\.5 st/.test(document.querySelector('.vtone').textContent)`, "pick Loona, change speed and pitch, and hear a sample");
+        await until(`document.querySelectorAll('.vtone .vtone-voice').length >= 4 && document.querySelectorAll('.vtone .vtone-range').length === 2 && document.querySelector('.vtone').classList.contains('vtone-open')`, "open the voice panel (voice options, speed and pitch)");
+        await ev(`(() => { const r = document.querySelectorAll('.vtone .vtone-range'); r[0].value = '1.15'; r[0].dispatchEvent(new Event('input', { bubbles: true })); r[1].value = '-1.5'; r[1].dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('.vtone .vtone-voice[data-voice="en-serena"]').click(); })()`);
+        await until(`document.querySelector('.vtone').dataset.previewing === 'true' && /1\\.15×/.test(document.querySelector('.vtone').textContent) && /−1\\.5 st/.test(document.querySelector('.vtone').textContent)`, "pick Serena, change speed and pitch, and hear a sample");
         await pause(500);
         await shot("05k-voice-panel");
         await until(`document.querySelector('.vtone').dataset.previewing === 'false'`, "finish the sample", 20_000);
         const sv = (await c.call<{ settings: Record<string, unknown> }>("settings.get", {})).settings;
-        if (sv.voice_tts_voice !== "loona" || sv.voice_tts_speed !== 1.15 || sv.voice_tts_pitch !== -1.5) throw new Error(`voice settings not saved: ${JSON.stringify({ voice: sv.voice_tts_voice, speed: sv.voice_tts_speed, pitch: sv.voice_tts_pitch })}`);
+        if (sv.voice_tts_voice !== "en-serena" || sv.voice_tts_speed !== 1.15 || sv.voice_tts_pitch !== -1.5) throw new Error(`voice settings not saved: ${JSON.stringify({ voice: sv.voice_tts_voice, speed: sv.voice_tts_speed, pitch: sv.voice_tts_pitch })}`);
         await ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
         await until(`!document.querySelector('.vtone') && document.querySelector('${vc}').dataset.voice === 'on'`, "close the voice panel with Esc");
         await pause(900);
         await until(`document.querySelector('${vc}').dataset.voice === 'on'`, "keep voice mode on after closing the panel");
-        await until(`/Loona/.test(document.querySelector('${vc} .cmp-voice-tts').textContent) && !!document.querySelector('${vc} .cmp-voice-tts .vtc-tuned')`, "show Loona (tuned) on the chip");
+        await until(`/Serena/.test(document.querySelector('${vc} .cmp-voice-tts').textContent) && !!document.querySelector('${vc} .cmp-voice-tts .vtc-tuned')`, "show Serena (tuned) on the chip");
         await c.call("settings.set", { patch: { voice_tts_voice: "", voice_tts_speed: 1, voice_tts_pitch: 0 } });
         // The voice agent uses the Browser panel itself (no worker): "open my app" -> browser_navigate on the real page.
         if (!process.env.OPSCODE_SKIP_VB) {
@@ -692,15 +735,19 @@ async function runSmoke(win: BrowserWindow, sup: RuntimeSupervisor): Promise<voi
     await until("!!document.querySelector('.sp:not([hidden]) [data-surface=diff]:not([hidden]) .sp-file') && !document.querySelector('.rv-page:not([hidden])')", "open the Changes tab from Review");
     console.log("OPSCODE_SMOKE: renderer Review page: changed project -> its Changes tab");
 
-    // Plugins page: featured catalog, MCP servers section, search, the add dialog (cancelled).
+    // Plugins page: recommended row, the catalog by category, search, the add dialog with a key (cancelled), and the one for a server behind a sign-in (cancelled).
     await ev("document.querySelector('.sb-nav[data-page=plugins]').click()");
-    await until("document.querySelectorAll('.pl-section[data-section=featured] .pl-card').length >= 10 && !!document.querySelector('.pl-section[data-section=mcp]')", "show the featured catalog and MCP servers");
+    await until("document.querySelectorAll('.pl-section[data-section=featured] .pl-card').length >= 10 && document.querySelectorAll('.pl-rcard').length >= 3", "show the recommended servers and the catalog");
     await shot("23-plugins");
     await ev(`(() => { const i = document.querySelector('.pl-search-input'); i.value = 'supabase'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
-    await until("document.querySelectorAll('.pl-section[data-section=featured] .pl-card').length === 1", "filter the catalog by search");
+    await until("document.querySelectorAll('.pl-section[data-section=featured] .pl-card').length === 2", "filter the catalog by search (the token and the sign-in Supabase)");
     await ev("document.querySelector('[data-catalog=supabase] .pl-plus').click()");
-    await until("!!document.querySelector('.dialog [aria-label=\"Supabase Access token\"]') && document.querySelector('.dialog').textContent.includes('npx -y @supabase/mcp-server-supabase')", "show what Supabase runs and ask for its token");
+    await until("!!document.querySelector('.dialog [aria-label=\"Supabase (token) Access token\"]') && document.querySelector('.dialog').textContent.includes('npx -y @supabase/mcp-server-supabase')", "show what Supabase runs and ask for its token");
     await shot("24-plugin-add");
+    await ev("[...document.querySelectorAll('.dialog .btn')].find((b) => b.textContent === 'Cancel').click()");
+    await ev("document.querySelector('[data-catalog=supabase-hosted] .pl-plus').click()");
+    await until("!!document.querySelector('.dialog') && !document.querySelector('.dialog input') && /sign in to Supabase/.test(document.querySelector('.dialog').textContent) && [...document.querySelectorAll('.dialog .btn')].some((b) => b.textContent === 'Add and sign in')", "a server behind a sign-in asks for no key and offers Add and sign in");
+    await shot("24b-plugin-signin-add");
     await ev("[...document.querySelectorAll('.dialog .btn')].find((b) => b.textContent === 'Cancel').click()");
     await ev(`(() => { const i = document.querySelector('.pl-search-input'); i.value = ''; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
     console.log("OPSCODE_SMOKE: renderer Plugins page: catalog, search, add dialog with key");
@@ -910,6 +957,12 @@ async function runSmoke(win: BrowserWindow, sup: RuntimeSupervisor): Promise<voi
       await until("document.querySelector('.chat:not([hidden]) textarea').value === '/smoke-skill '", "insert the skill name");
       await ev(`(() => { const t = document.querySelector('.chat:not([hidden]) textarea'); t.value = ''; t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
       console.log("OPSCODE_SMOKE: renderer composer: / menu lists skills and inserts one");
+      if ((await ev<string>(`${badge}.dataset.mode`)) !== "supervised") {
+        await ev(`${settingsBtn}.click()`);
+        await until("!!document.querySelector('.menu')", "open permissions for the write approval fixture");
+        await ev("[...document.querySelectorAll('.menu-item')].find((e) => e.textContent.includes('Supervised')).click()");
+        await until(`${badge}.dataset.mode === 'supervised'`, "set the write approval fixture to Supervised");
+      }
       await ev(`(() => { const t = document.querySelector('.chat:not([hidden]) textarea'); t.value = 'write the agent file'; t.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('.chat:not([hidden]) .send').click(); })()`);
       try {
         await until("!!document.querySelector('[data-slot=opscode-message] [data-slot=approval-card][data-call] [data-slot=approval-card-allow-once]')", "show the approval card (assistant-ui Approval card in the reply)");
@@ -1050,6 +1103,20 @@ async function runSmoke(win: BrowserWindow, sup: RuntimeSupervisor): Promise<voi
       await ev("[...document.querySelectorAll('.chat:not([hidden]) [data-branch=true] button')].find((b) => b.textContent.startsWith('Stay on')).click()");
       await until("[...document.querySelectorAll('.chat:not([hidden]) .msg-assistant')].some((e) => e.textContent.includes('Bash deny')) && !document.querySelector('.chat:not([hidden]) [data-branch=true]')", "refuse the branch and carry on");
       console.log("OPSCODE_SMOKE: renderer branch card: git icon, name, current branch, Create / Always allow / Stay on / Always stay -> refused");
+      // Question card (Slice B): Claude Code asks with AskUserQuestion; the card sits on top of the message box, the first
+      // option is marked Recommended, picking it moves to question 2 (several picks), typing in the message box answers it.
+      await ev(`(() => { const t = document.querySelector('.chat:not([hidden]) textarea'); t.value = 'please FAKE_ASK'; t.dispatchEvent(new Event('input', { bubbles: true })); t.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
+      await until("(() => { const c = document.querySelector('.chat:not([hidden]) .composer-wrap > .ask-card:not([hidden])'); return !!c && c.textContent.includes('Deploy the backend now?') && !!c.querySelector('.ask-rec') && c.querySelectorAll('.ask-opt').length === 2 && !!c.querySelector('.ask-other-input'); })()", "show the question card above the message box");
+      await until("!!document.querySelector('.chat:not([hidden]) .ask-line[data-state=waiting]') && [...document.querySelectorAll('.sb-chat[data-state=needs]')].length > 0", "show Waiting for your answer in the chat and Needs you in the sidebar");
+      await shot("21d-question-card");
+      await ev("document.querySelector('.chat:not([hidden]) .ask-card .ask-opt').click()");
+      await until("(() => { const c = document.querySelector('.chat:not([hidden]) .ask-card:not([hidden])'); return !!c && c.textContent.includes('Which apps get a new APK?') && c.textContent.includes('Question 2 of 2') && c.textContent.includes('Pick one or more.'); })()", "move to the second question");
+      await ev("document.querySelectorAll('.chat:not([hidden]) .ask-card .ask-opt')[0].click()");
+      await ev(`(() => { const t = document.querySelector('.chat:not([hidden]) textarea'); t.value = 'and the web build'; t.dispatchEvent(new Event('input', { bubbles: true })); t.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
+      await until("[...document.querySelectorAll('.chat:not([hidden]) .msg-assistant')].some((e) => e.textContent.includes('Going on with:') && e.textContent.includes('Deploy the backend now? = Yes, deploy now (Recommended)') && e.textContent.includes('Vendor app + and the web build')) && document.querySelector('.chat:not([hidden]) .ask-card').hidden", "send the answers and go on in the same turn");
+      await until("!!document.querySelector('.chat:not([hidden]) .ask-line[data-state=answered]') && document.querySelector('.chat:not([hidden]) .ask-line[data-state=answered]').textContent.includes('You chose: Yes, deploy now')", "show what you chose in the chat");
+      await shot("21e-question-answered");
+      console.log("OPSCODE_SMOKE: renderer question card: above the message box, Recommended, 1 of 2 -> several picks, typed answer, You chose, Needs you in the sidebar");
       // The context ring opens Overview with Context unfolded: tokens in the window and the cache estimate.
       await ev("document.querySelector('.chat:not([hidden]) .cmp-ring').click()");
       await until("(() => { const o = document.querySelector('.sp:not([hidden]) [data-surface=overview]'); const c = o?.querySelector('[data-section=context] .ov-head'); return o && c?.getAttribute('aria-expanded') === 'true' && o.textContent.includes('Environment') && o.textContent.includes('Remote') && o.textContent.includes('Cache expiry') && o.textContent.includes('Claude Sonnet 5.5') && o.querySelector('[data-section=connectors]'); })()", "open Overview from the context ring");
@@ -1316,6 +1383,25 @@ function runtimeCommand(): string {
   return existsSync(helper) ? helper : process.execPath;
 }
 
+/**
+ * The main window's close button (macOS): hides the window instead of closing it, like other Mac apps, so the notch,
+ * chats and agents keep going and the window comes back at once. ⌘Q (or Quit in the notch's menu) really quits.
+ * Tells the notch when the window gains or loses focus, so a finished chat on screen counts as seen.
+ */
+function attachMain(win: BrowserWindow): BrowserWindow {
+  win.on("close", (event) => {
+    if (quitting || SMOKE || process.env.OPSCODE_REALTEST || process.platform !== "darwin" || !notch) return;
+    event.preventDefault();
+    if (win.isFullScreen()) { win.once("leave-full-screen", () => win.hide()); win.setFullScreen(false); }
+    else win.hide();
+  });
+  win.on("focus", () => notch?.mainFocus(true));
+  win.on("blur", () => notch?.mainFocus(false));
+  win.on("hide", () => notch?.mainFocus(false));
+  win.on("closed", () => { notch?.mainFocus(false); if (mainWindow === win) mainWindow = null; });
+  return win;
+}
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
@@ -1343,7 +1429,51 @@ if (!app.requestSingleInstanceLock()) {
     browserHost.start();
 
     const preloadPath = join(__dirname, "..", "preload", "index.js");
-    mainWindow = createMainWindow(preloadPath);
+    mainWindow = attachMain(createMainWindow(preloadPath));
+    // The notch: always on at the top of the screen, with its own runtime connection (works with the window closed).
+    if (!SMOKE && !process.env.OPSCODE_REALTEST && process.env.OPSCODE_NOTCH !== "0" && (process.platform === "darwin" || process.platform === "win32")) {
+      notch = new Notch({
+        url: `${APP_URL}notch.html`,
+        preload: join(__dirname, "..", "preload", "notch.js"),
+        log,
+        endpoint: () => supervisor?.endpoint ?? null,
+        openMain: (target) => {
+          if (!mainWindow || mainWindow.isDestroyed()) mainWindow = attachMain(createMainWindow(preloadPath));
+          const win = mainWindow;
+          focusWindow(win);
+          if (target.chat_id || target.newchat || target.workspace_id) {
+            const go = (): void => win.webContents.send(CH.NOTCH_OPEN, target);
+            if (win.webContents.isLoading()) win.webContents.once("did-finish-load", () => setTimeout(go, 400)); else go();
+          }
+        },
+      });
+      notch.start();
+      if (process.platform === "darwin") {
+        const menu = Menu.getApplicationMenu();
+        if (menu) {
+          const appMenu = menu.items[0]?.submenu;
+          appMenu?.insert(Math.min(2, appMenu.items.length), new MenuItem({
+            label: "Pair Android…", accelerator: "Command+Option+Shift+P", click: () => notch?.pairAndroid(),
+          }));
+          Menu.setApplicationMenu(menu);
+        }
+      }
+      ipcMain.on(CH.NOTCH_VIEWING, (event, chatId: unknown) => {
+        if (!isOwnFrame(event.senderFrame?.url) || event.sender !== mainWindow?.webContents) return;
+        notch?.viewing(typeof chatId === "string" && chatId.length <= 200 ? chatId : null);
+      });
+    }
+    ipcMain.handle(CH.MOBILE_DEVICES, async (event, action: unknown, arg: unknown) => {
+      if (!isOwnFrame(event.senderFrame?.url) || event.sender !== mainWindow?.webContents) return null;
+      switch (action) {
+        case "status": break;
+        case "pair": await notch?.pairAndroid(false); break;
+        case "revoke":
+          if (typeof arg === "string" && /^[0-9a-f]{32}$/.test(arg)) await notch?.revokeMobileDevice(arg);
+          break;
+      }
+      return notch?.mobileStatus() ?? null;
+    });
     if (SMOKE) void runSmoke(mainWindow, supervisor);
     else if (process.env.OPSCODE_REALTEST) {
       const sup = supervisor;
@@ -1351,14 +1481,16 @@ if (!app.requestSingleInstanceLock()) {
     }
 
     app.on("activate", () => {
-      if (BrowserWindow.getAllWindows().length === 0) mainWindow = createMainWindow(preloadPath);
+      if (!mainWindow || mainWindow.isDestroyed()) mainWindow = attachMain(createMainWindow(preloadPath));
       else focusWindow(mainWindow);
     });
   });
 
   // Stop the runtime before quitting so it never outlives the app.
   app.on("before-quit", (event) => {
+    quitting = true;
     if (shuttingDown || !supervisor) return;
+    notch?.stop();
     event.preventDefault();
     shuttingDown = true;
     browserHost?.stop();

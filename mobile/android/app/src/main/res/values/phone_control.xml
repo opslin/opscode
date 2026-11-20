@@ -1,0 +1,5 @@
+<resources>
+    <string name="phone_control_name">Opscode Screen Control</string>
+    <string name="phone_control_description">Runs your selected scroll, back, home, play, or pause command on the current unlocked app. Screen content stays on this device.</string>
+    <string name="phone_control_tile">Opscode Screen</string>
+</resources>

@@ -88,6 +88,8 @@ try {
   const finished = (turn) => evs(turn).some((e) => ["completed", "failed", "interrupted"].includes(e.type));
   const last = (turn) => evs(turn).at(-1);
   const wid = (await C.call("workspace.add", { path: proj })).result.workspace.id;
+  // These checks are about approval cards: run the chat in Supervised (the default is now Auto, where in-project writes go ahead).
+  await C.call("settings.set", { patch: { default_mode: "supervised" } });
 
   async function run(text) {
     const r = await C.call("turn.submit", { workspace_id: wid, text });

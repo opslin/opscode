@@ -1,0 +1,1305 @@
+{
+  "roles": {
+    "customer": [
+      {
+        "label": "Auctions",
+        "route": "/auctions",
+        "example": "/auctions",
+        "source": "customer/lib/routing/app_router.dart:352",
+        "group": "auctions"
+      },
+      {
+        "label": "Auction Detail",
+        "route": "/auctions/:id",
+        "example": "/auctions/demo-auction",
+        "source": "customer/lib/routing/app_router.dart:371",
+        "group": "auctions"
+      },
+      {
+        "label": "Auction Chat",
+        "route": "/auctions/:id/chat",
+        "example": "/auctions/demo-auction/chat",
+        "source": "customer/lib/routing/app_router.dart:363",
+        "group": "auctions"
+      },
+      {
+        "label": "Auctions Watching",
+        "route": "/auctions/watching",
+        "example": "/auctions/watching",
+        "source": "customer/lib/routing/app_router.dart:358",
+        "group": "auctions"
+      },
+      {
+        "label": "Otp Verify",
+        "route": "/auth/otp",
+        "example": "/auth/otp?inspect=1",
+        "source": "customer/lib/routing/app_router.dart:155",
+        "group": "auth"
+      },
+      {
+        "label": "Phone Entry",
+        "route": "/auth/phone",
+        "example": "/auth/phone?inspect=1",
+        "source": "customer/lib/routing/app_router.dart:149",
+        "group": "auth"
+      },
+      {
+        "label": "Cart",
+        "route": "/cart",
+        "example": "/cart",
+        "source": "customer/lib/routing/app_router.dart:473",
+        "group": "cart"
+      },
+      {
+        "label": "Checkout",
+        "route": "/cart/checkout",
+        "example": "/cart/checkout",
+        "source": "customer/lib/routing/app_router.dart:479",
+        "group": "cart"
+      },
+      {
+        "label": "payment",
+        "route": "/cart/checkout/payment",
+        "example": "/cart/checkout/payment",
+        "source": "customer/lib/routing/app_router.dart:485",
+        "group": "cart"
+      },
+      {
+        "label": "Categories",
+        "route": "/categories",
+        "example": "/categories",
+        "source": "customer/lib/routing/app_router.dart:561",
+        "group": "categories"
+      },
+      {
+        "label": "Category Products",
+        "route": "/categories/:categoryId/products",
+        "example": "/categories/phones/products",
+        "source": "customer/lib/routing/app_router.dart:567",
+        "group": "categories"
+      },
+      {
+        "label": "Exchange",
+        "route": "/exchange",
+        "example": "/exchange",
+        "source": "customer/lib/routing/app_router.dart:198",
+        "group": "exchange"
+      },
+      {
+        "label": "Home",
+        "route": "/home",
+        "example": "/home",
+        "source": "customer/lib/routing/app_router.dart:515",
+        "group": "home"
+      },
+      {
+        "label": "Location Unavailable",
+        "route": "/location-unavailable",
+        "example": "/location-unavailable",
+        "source": "customer/lib/routing/app_router.dart:380",
+        "group": "location-unavailable"
+      },
+      {
+        "label": "onboarding",
+        "route": "/onboarding",
+        "example": "/onboarding",
+        "source": "customer/lib/routing/app_router.dart:419",
+        "group": "onboarding"
+      },
+      {
+        "label": "Orders",
+        "route": "/orders",
+        "example": "/orders",
+        "source": "customer/lib/routing/app_router.dart:526",
+        "group": "orders"
+      },
+      {
+        "label": "Order Success",
+        "route": "/orders/success/:orderId",
+        "example": "/orders/success/demo-order",
+        "source": "customer/lib/routing/app_router.dart:464",
+        "group": "orders"
+      },
+      {
+        "label": "Order Tracking",
+        "route": "/orders/track",
+        "example": "/orders/track",
+        "source": "customer/lib/routing/app_router.dart:543",
+        "group": "orders"
+      },
+      {
+        "label": "Product Detail",
+        "route": "/product/:productId",
+        "example": "/product/DEMO_FIRST_PRODUCT",
+        "source": "customer/lib/routing/app_router.dart:396",
+        "group": "product"
+      },
+      {
+        "label": "Product Qc",
+        "route": "/product/:productId/qc",
+        "example": "/product/DEMO_FIRST_PRODUCT/qc",
+        "source": "customer/lib/routing/app_router.dart:386",
+        "group": "product"
+      },
+      {
+        "label": "Product Detail",
+        "route": "/products/:slug",
+        "example": "/products/velo-1",
+        "source": "customer/lib/routing/app_router.dart:410",
+        "group": "products"
+      },
+      {
+        "label": "Profile",
+        "route": "/profile",
+        "example": "/profile",
+        "source": "customer/lib/routing/app_router.dart:582",
+        "group": "profile"
+      },
+      {
+        "label": "Address List",
+        "route": "/profile/addresses",
+        "example": "/profile/addresses",
+        "source": "customer/lib/routing/app_router.dart:647",
+        "group": "profile"
+      },
+      {
+        "label": "Add Edit Address",
+        "route": "/profile/addresses/add",
+        "example": "/profile/addresses/add",
+        "source": "customer/lib/routing/app_router.dart:663",
+        "group": "profile"
+      },
+      {
+        "label": "Business Account",
+        "route": "/profile/business-account",
+        "example": "/profile/business-account",
+        "source": "customer/lib/routing/app_router.dart:695",
+        "group": "profile"
+      },
+      {
+        "label": "Edit Profile",
+        "route": "/profile/edit",
+        "example": "/profile/edit",
+        "source": "customer/lib/routing/app_router.dart:588",
+        "group": "profile"
+      },
+      {
+        "label": "Notifications",
+        "route": "/profile/notifications",
+        "example": "/profile/notifications",
+        "source": "customer/lib/routing/app_router.dart:675",
+        "group": "profile"
+      },
+      {
+        "label": "Notification Preferences",
+        "route": "/profile/notifications/preferences",
+        "example": "/profile/notifications/preferences",
+        "source": "customer/lib/routing/app_router.dart:681",
+        "group": "profile"
+      },
+      {
+        "label": "Reviews",
+        "route": "/profile/reviews",
+        "example": "/profile/reviews",
+        "source": "customer/lib/routing/app_router.dart:689",
+        "group": "profile"
+      },
+      {
+        "label": "settings",
+        "route": "/profile/settings",
+        "example": "/profile/settings",
+        "source": "customer/lib/routing/app_router.dart:701",
+        "group": "profile"
+      },
+      {
+        "label": "Wallet",
+        "route": "/profile/wallet",
+        "example": "/profile/wallet",
+        "source": "customer/lib/routing/app_router.dart:600",
+        "group": "profile"
+      },
+      {
+        "label": "Send Money",
+        "route": "/profile/wallet/send",
+        "example": "/profile/wallet/send",
+        "source": "customer/lib/routing/app_router.dart:633",
+        "group": "profile"
+      },
+      {
+        "label": "Topup",
+        "route": "/profile/wallet/topup",
+        "example": "/profile/wallet/topup",
+        "source": "customer/lib/routing/app_router.dart:606",
+        "group": "profile"
+      },
+      {
+        "label": "Wishlist",
+        "route": "/profile/wishlist",
+        "example": "/profile/wishlist",
+        "source": "customer/lib/routing/app_router.dart:641",
+        "group": "profile"
+      },
+      {
+        "label": "Repair Home",
+        "route": "/repair",
+        "example": "/repair",
+        "source": "customer/lib/routing/app_router.dart:258",
+        "group": "repair"
+      },
+      {
+        "label": "Repair Status",
+        "route": "/repair/:id",
+        "example": "/repair/demo-repair",
+        "source": "customer/lib/routing/app_router.dart:273",
+        "group": "repair"
+      },
+      {
+        "label": "Repair Appointment Type",
+        "route": "/repair/:id/book/:offerId",
+        "example": "/repair/demo-repair/book/demo-offer",
+        "source": "customer/lib/routing/app_router.dart:298",
+        "group": "repair"
+      },
+      {
+        "label": "Repair Pickup Booking",
+        "route": "/repair/:id/book/:offerId/pickup",
+        "example": "/repair/demo-repair/book/demo-offer/pickup",
+        "source": "customer/lib/routing/app_router.dart:316",
+        "group": "repair"
+      },
+      {
+        "label": "Repair Store Booking",
+        "route": "/repair/:id/book/:offerId/store",
+        "example": "/repair/demo-repair/book/demo-offer/store",
+        "source": "customer/lib/routing/app_router.dart:307",
+        "group": "repair"
+      },
+      {
+        "label": "Repair Chat",
+        "route": "/repair/:id/chat",
+        "example": "/repair/demo-repair/chat",
+        "source": "customer/lib/routing/app_router.dart:327",
+        "group": "repair"
+      },
+      {
+        "label": "Repair Confirmed",
+        "route": "/repair/:id/confirmed",
+        "example": "/repair/demo-repair/confirmed",
+        "source": "customer/lib/routing/app_router.dart:341",
+        "group": "repair"
+      },
+      {
+        "label": "Repair Pay",
+        "route": "/repair/:id/pay",
+        "example": "/repair/demo-repair/pay",
+        "source": "customer/lib/routing/app_router.dart:334",
+        "group": "repair"
+      },
+      {
+        "label": "Repair Quotes",
+        "route": "/repair/:id/quotes",
+        "example": "/repair/demo-repair/quotes",
+        "source": "customer/lib/routing/app_router.dart:280",
+        "group": "repair"
+      },
+      {
+        "label": "Repair Shop",
+        "route": "/repair/:id/quotes/:offerId",
+        "example": "/repair/demo-repair/quotes/demo-offer",
+        "source": "customer/lib/routing/app_router.dart:287",
+        "group": "repair"
+      },
+      {
+        "label": "Repair My",
+        "route": "/repair/mine",
+        "example": "/repair/mine",
+        "source": "customer/lib/routing/app_router.dart:268",
+        "group": "repair"
+      },
+      {
+        "label": "Repair Request",
+        "route": "/repair/new",
+        "example": "/repair/new",
+        "source": "customer/lib/routing/app_router.dart:263",
+        "group": "repair"
+      },
+      {
+        "label": ":order Id",
+        "route": "/returns/:orderId",
+        "example": "/returns/demo-order",
+        "source": "customer/lib/routing/app_router.dart:435",
+        "group": "returns"
+      },
+      {
+        "label": "chat",
+        "route": "/returns/:orderId/chat",
+        "example": "/returns/demo-order/chat",
+        "source": "customer/lib/routing/app_router.dart:453",
+        "group": "returns"
+      },
+      {
+        "label": "new",
+        "route": "/returns/:orderId/new",
+        "example": "/returns/demo-order/new",
+        "source": "customer/lib/routing/app_router.dart:444",
+        "group": "returns"
+      },
+      {
+        "label": "Return Policy",
+        "route": "/returns/policy",
+        "example": "/returns/policy",
+        "source": "customer/lib/routing/app_router.dart:426",
+        "group": "returns"
+      },
+      {
+        "label": "Search",
+        "route": "/search",
+        "example": "/search",
+        "source": "customer/lib/routing/app_router.dart:178",
+        "group": "search"
+      },
+      {
+        "label": "Sell Hub",
+        "route": "/sell",
+        "example": "/sell",
+        "source": "customer/lib/routing/app_router.dart:214",
+        "group": "sell"
+      },
+      {
+        "label": "Sell Status",
+        "route": "/sell/:id",
+        "example": "/sell/demo-record",
+        "source": "customer/lib/routing/app_router.dart:224",
+        "group": "sell"
+      },
+      {
+        "label": "Sell Booking",
+        "route": "/sell/:id/book",
+        "example": "/sell/demo-record/book",
+        "source": "customer/lib/routing/app_router.dart:247",
+        "group": "sell"
+      },
+      {
+        "label": "Sell Chat",
+        "route": "/sell/:id/chat/:vendorId",
+        "example": "/sell/demo-record/chat/demo-shop",
+        "source": "customer/lib/routing/app_router.dart:238",
+        "group": "sell"
+      },
+      {
+        "label": "Sell Offers",
+        "route": "/sell/:id/offers",
+        "example": "/sell/demo-record/offers",
+        "source": "customer/lib/routing/app_router.dart:231",
+        "group": "sell"
+      },
+      {
+        "label": "Sell New",
+        "route": "/sell/new",
+        "example": "/sell/new",
+        "source": "customer/lib/routing/app_router.dart:219",
+        "group": "sell"
+      },
+      {
+        "label": "Shop Profile",
+        "route": "/shop/:shopId",
+        "example": "/shop/demo-shop",
+        "source": "customer/lib/routing/app_router.dart:170",
+        "group": "shop"
+      },
+      {
+        "label": "Shops List",
+        "route": "/shops",
+        "example": "/shops",
+        "source": "customer/lib/routing/app_router.dart:164",
+        "group": "shops"
+      },
+      {
+        "label": "Splash",
+        "route": "/splash",
+        "example": "/splash",
+        "source": "customer/lib/routing/app_router.dart:143",
+        "group": "splash"
+      },
+      {
+        "label": "Support Chat",
+        "route": "/support/chat",
+        "example": "/support/chat",
+        "source": "customer/lib/routing/app_router.dart:187",
+        "group": "support"
+      }
+    ],
+    "vendor": [
+      {
+        "label": "Splash",
+        "route": "/",
+        "example": "/",
+        "source": "vendor/lib/routing/app_router.dart:119",
+        "group": "Entry"
+      },
+      {
+        "label": "Abandoned Carts",
+        "route": "/abandoned-carts",
+        "example": "/abandoned-carts",
+        "source": "vendor/lib/routing/app_router.dart:340",
+        "group": "abandoned-carts"
+      },
+      {
+        "label": "Cart Detail",
+        "route": "/abandoned-carts/view/:id",
+        "example": "/abandoned-carts/view/c1",
+        "source": "vendor/lib/routing/app_router.dart:343",
+        "group": "abandoned-carts"
+      },
+      {
+        "label": "Send Reminder",
+        "route": "/abandoned-carts/view/:id/remind",
+        "example": "/abandoned-carts/view/c1/remind",
+        "source": "vendor/lib/routing/app_router.dart:346",
+        "group": "abandoned-carts"
+      },
+      {
+        "label": "Auctions Hub",
+        "route": "/auctions",
+        "example": "/auctions",
+        "source": "vendor/lib/routing/app_router.dart:246",
+        "group": "auctions"
+      },
+      {
+        "label": "Create Auction",
+        "route": "/auctions/create",
+        "example": "/auctions/create",
+        "source": "vendor/lib/routing/app_router.dart:248",
+        "group": "auctions"
+      },
+      {
+        "label": "Auction Created",
+        "route": "/auctions/created",
+        "example": "/auctions/created",
+        "source": "vendor/lib/routing/app_router.dart:251",
+        "group": "auctions"
+      },
+      {
+        "label": "Lot Detail",
+        "route": "/auctions/lot/:id",
+        "example": "/auctions/lot/L1",
+        "source": "vendor/lib/routing/app_router.dart:263",
+        "group": "auctions"
+      },
+      {
+        "label": "My Auction Detail",
+        "route": "/auctions/view/:id",
+        "example": "/auctions/view/d1",
+        "source": "vendor/lib/routing/app_router.dart:259",
+        "group": "auctions"
+      },
+      {
+        "label": "Auction Chat",
+        "route": "/auctions/view/:id/chat",
+        "example": "/auctions/view/d1/chat",
+        "source": "vendor/lib/routing/app_router.dart:255",
+        "group": "auctions"
+      },
+      {
+        "label": "Business Profile",
+        "route": "/business-profile",
+        "example": "/business-profile",
+        "source": "vendor/lib/routing/app_router.dart:278",
+        "group": "business-profile"
+      },
+      {
+        "label": "Campaigns",
+        "route": "/campaigns",
+        "example": "/campaigns",
+        "source": "vendor/lib/routing/app_router.dart:266",
+        "group": "campaigns"
+      },
+      {
+        "label": "Create Campaign",
+        "route": "/campaigns/create",
+        "example": "/campaigns/create",
+        "source": "vendor/lib/routing/app_router.dart:268",
+        "group": "campaigns"
+      },
+      {
+        "label": "Campaign Created",
+        "route": "/campaigns/created",
+        "example": "/campaigns/created",
+        "source": "vendor/lib/routing/app_router.dart:271",
+        "group": "campaigns"
+      },
+      {
+        "label": "Campaign Detail",
+        "route": "/campaigns/view/:id",
+        "example": "/campaigns/view/c1",
+        "source": "vendor/lib/routing/app_router.dart:369",
+        "group": "campaigns"
+      },
+      {
+        "label": "Ad Wallet",
+        "route": "/campaigns/wallet",
+        "example": "/campaigns/wallet",
+        "source": "vendor/lib/routing/app_router.dart:275",
+        "group": "campaigns"
+      },
+      {
+        "label": "Deals",
+        "route": "/deals",
+        "example": "/deals",
+        "source": "vendor/lib/routing/app_router.dart:336",
+        "group": "deals"
+      },
+      {
+        "label": "Deal Detail",
+        "route": "/deals/view/:id",
+        "example": "/deals/view/demo-deal",
+        "source": "vendor/lib/routing/app_router.dart:337",
+        "group": "deals"
+      },
+      {
+        "label": "Demand Hub",
+        "route": "/demand",
+        "example": "/demand",
+        "source": "vendor/lib/routing/app_router.dart:349",
+        "group": "demand"
+      },
+      {
+        "label": "Order Tracking",
+        "route": "/demand/orders/:id",
+        "example": "/demand/orders/o-pay",
+        "source": "vendor/lib/routing/app_router.dart:366",
+        "group": "demand"
+      },
+      {
+        "label": "Post Demand",
+        "route": "/demand/post",
+        "example": "/demand/post",
+        "source": "vendor/lib/routing/app_router.dart:353",
+        "group": "demand"
+      },
+      {
+        "label": "Requirement",
+        "route": "/demand/view/:id",
+        "example": "/demand/view/r1",
+        "source": "vendor/lib/routing/app_router.dart:356",
+        "group": "demand"
+      },
+      {
+        "label": "Offer",
+        "route": "/demand/view/:id/offer",
+        "example": "/demand/view/r1/offer",
+        "source": "vendor/lib/routing/app_router.dart:359",
+        "group": "demand"
+      },
+      {
+        "label": "Payment",
+        "route": "/demand/view/:id/pay",
+        "example": "/demand/view/r1/pay",
+        "source": "vendor/lib/routing/app_router.dart:362",
+        "group": "demand"
+      },
+      {
+        "label": "Help Support",
+        "route": "/help",
+        "example": "/help",
+        "source": "vendor/lib/routing/app_router.dart:282",
+        "group": "help"
+      },
+      {
+        "label": "Support Chat",
+        "route": "/help/chat/:id",
+        "example": "/help/chat/demo-record",
+        "source": "vendor/lib/routing/app_router.dart:284",
+        "group": "help"
+      },
+      {
+        "label": "New Ticket",
+        "route": "/help/new",
+        "example": "/help/new",
+        "source": "vendor/lib/routing/app_router.dart:283",
+        "group": "help"
+      },
+      {
+        "label": "Home",
+        "route": "/home",
+        "example": "/home",
+        "source": "vendor/lib/routing/app_router.dart:127",
+        "group": "home"
+      },
+      {
+        "label": "Login",
+        "route": "/login",
+        "example": "/login?inspect=1",
+        "source": "vendor/lib/routing/app_router.dart:121",
+        "group": "login"
+      },
+      {
+        "label": "My Orders",
+        "route": "/my-orders",
+        "example": "/my-orders",
+        "source": "vendor/lib/routing/app_router.dart:129",
+        "group": "my-orders"
+      },
+      {
+        "label": "Notifications",
+        "route": "/notifications",
+        "example": "/notifications",
+        "source": "vendor/lib/routing/app_router.dart:287",
+        "group": "notifications"
+      },
+      {
+        "label": "Orders",
+        "route": "/orders",
+        "example": "/orders",
+        "source": "vendor/lib/routing/app_router.dart:197",
+        "group": "orders"
+      },
+      {
+        "label": "Repair Detail",
+        "route": "/orders/repair/:id",
+        "example": "/orders/repair/demo-repair",
+        "source": "vendor/lib/routing/app_router.dart:205",
+        "group": "orders"
+      },
+      {
+        "label": "Order Detail",
+        "route": "/orders/view/:id",
+        "example": "/orders/view/demo-order",
+        "source": "vendor/lib/routing/app_router.dart:202",
+        "group": "orders"
+      },
+      {
+        "label": "Otp",
+        "route": "/otp",
+        "example": "/otp?inspect=1",
+        "source": "vendor/lib/routing/app_router.dart:124",
+        "group": "otp"
+      },
+      {
+        "label": "Payout History",
+        "route": "/payouts",
+        "example": "/payouts",
+        "source": "vendor/lib/routing/app_router.dart:296",
+        "group": "payouts"
+      },
+      {
+        "label": "Products",
+        "route": "/products",
+        "example": "/products",
+        "source": "vendor/lib/routing/app_router.dart:179",
+        "group": "products"
+      },
+      {
+        "label": "Add Product",
+        "route": "/products/add",
+        "example": "/products/add",
+        "source": "vendor/lib/routing/app_router.dart:181",
+        "group": "products"
+      },
+      {
+        "label": "Bulk Add",
+        "route": "/products/bulk",
+        "example": "/products/bulk",
+        "source": "vendor/lib/routing/app_router.dart:184",
+        "group": "products"
+      },
+      {
+        "label": "Product Submitted",
+        "route": "/products/submitted",
+        "example": "/products/submitted",
+        "source": "vendor/lib/routing/app_router.dart:186",
+        "group": "products"
+      },
+      {
+        "label": "Product Manage",
+        "route": "/products/view/:id",
+        "example": "/products/view/p1",
+        "source": "vendor/lib/routing/app_router.dart:190",
+        "group": "products"
+      },
+      {
+        "label": "Product Media Edit",
+        "route": "/products/view/:id/media",
+        "example": "/products/view/p1/media",
+        "source": "vendor/lib/routing/app_router.dart:193",
+        "group": "products"
+      },
+      {
+        "label": "Profile",
+        "route": "/profile",
+        "example": "/profile",
+        "source": "vendor/lib/routing/app_router.dart:128",
+        "group": "profile"
+      },
+      {
+        "label": "Repair Add Address",
+        "route": "/profile/addresses/add",
+        "example": "/profile/addresses/add",
+        "source": "vendor/lib/routing/app_router.dart:130",
+        "group": "profile"
+      },
+      {
+        "label": "Register",
+        "route": "/register",
+        "example": "/register?inspect=1",
+        "source": "vendor/lib/routing/app_router.dart:122",
+        "group": "register"
+      },
+      {
+        "label": "Repair Home",
+        "route": "/repair",
+        "example": "/repair",
+        "source": "vendor/lib/routing/app_router.dart:133",
+        "group": "repair"
+      },
+      {
+        "label": "Repair Status",
+        "route": "/repair/:id",
+        "example": "/repair/demo-repair",
+        "source": "vendor/lib/routing/app_router.dart:139",
+        "group": "repair"
+      },
+      {
+        "label": "Repair Appointment Type",
+        "route": "/repair/:id/book/:offerId",
+        "example": "/repair/demo-repair/book/demo-offer",
+        "source": "vendor/lib/routing/app_router.dart:154",
+        "group": "repair"
+      },
+      {
+        "label": "Repair Pickup Booking",
+        "route": "/repair/:id/book/:offerId/pickup",
+        "example": "/repair/demo-repair/book/demo-offer/pickup",
+        "source": "vendor/lib/routing/app_router.dart:164",
+        "group": "repair"
+      },
+      {
+        "label": "Repair Store Booking",
+        "route": "/repair/:id/book/:offerId/store",
+        "example": "/repair/demo-repair/book/demo-offer/store",
+        "source": "vendor/lib/routing/app_router.dart:159",
+        "group": "repair"
+      },
+      {
+        "label": "Repair Chat",
+        "route": "/repair/:id/chat",
+        "example": "/repair/demo-repair/chat",
+        "source": "vendor/lib/routing/app_router.dart:171",
+        "group": "repair"
+      },
+      {
+        "label": "Repair Confirmed",
+        "route": "/repair/:id/confirmed",
+        "example": "/repair/demo-repair/confirmed",
+        "source": "vendor/lib/routing/app_router.dart:173",
+        "group": "repair"
+      },
+      {
+        "label": "Repair Pay",
+        "route": "/repair/:id/pay",
+        "example": "/repair/demo-repair/pay",
+        "source": "vendor/lib/routing/app_router.dart:172",
+        "group": "repair"
+      },
+      {
+        "label": "Repair Quotes",
+        "route": "/repair/:id/quotes",
+        "example": "/repair/demo-repair/quotes",
+        "source": "vendor/lib/routing/app_router.dart:143",
+        "group": "repair"
+      },
+      {
+        "label": "Repair Shop",
+        "route": "/repair/:id/quotes/:offerId",
+        "example": "/repair/demo-repair/quotes/demo-offer",
+        "source": "vendor/lib/routing/app_router.dart:147",
+        "group": "repair"
+      },
+      {
+        "label": "Repair My",
+        "route": "/repair/mine",
+        "example": "/repair/mine",
+        "source": "vendor/lib/routing/app_router.dart:138",
+        "group": "repair"
+      },
+      {
+        "label": "Repair Request",
+        "route": "/repair/new",
+        "example": "/repair/new",
+        "source": "vendor/lib/routing/app_router.dart:137",
+        "group": "repair"
+      },
+      {
+        "label": "Repair Inbox",
+        "route": "/repairs",
+        "example": "/repairs",
+        "source": "vendor/lib/routing/app_router.dart:208",
+        "group": "repairs"
+      },
+      {
+        "label": "Repair Job",
+        "route": "/repairs/job/:id",
+        "example": "/repairs/job/demo-repair",
+        "source": "vendor/lib/routing/app_router.dart:225",
+        "group": "repairs"
+      },
+      {
+        "label": "Repair Chat",
+        "route": "/repairs/job/:id/chat",
+        "example": "/repairs/job/demo-repair/chat",
+        "source": "vendor/lib/routing/app_router.dart:237",
+        "group": "repairs"
+      },
+      {
+        "label": "Device Check",
+        "route": "/repairs/job/:id/check",
+        "example": "/repairs/job/demo-repair/check",
+        "source": "vendor/lib/routing/app_router.dart:228",
+        "group": "repairs"
+      },
+      {
+        "label": "Repair Handover",
+        "route": "/repairs/job/:id/handover",
+        "example": "/repairs/job/demo-repair/handover",
+        "source": "vendor/lib/routing/app_router.dart:243",
+        "group": "repairs"
+      },
+      {
+        "label": "Repair Progress",
+        "route": "/repairs/job/:id/progress",
+        "example": "/repairs/job/demo-repair/progress",
+        "source": "vendor/lib/routing/app_router.dart:234",
+        "group": "repairs"
+      },
+      {
+        "label": "Job Quote",
+        "route": "/repairs/job/:id/quote",
+        "example": "/repairs/job/demo-repair/quote",
+        "source": "vendor/lib/routing/app_router.dart:231",
+        "group": "repairs"
+      },
+      {
+        "label": "Repair Ready",
+        "route": "/repairs/job/:id/ready",
+        "example": "/repairs/job/demo-repair/ready",
+        "source": "vendor/lib/routing/app_router.dart:240",
+        "group": "repairs"
+      },
+      {
+        "label": "Repair Prices",
+        "route": "/repairs/prices",
+        "example": "/repairs/prices",
+        "source": "vendor/lib/routing/app_router.dart:210",
+        "group": "repairs"
+      },
+      {
+        "label": "Add Repair Service",
+        "route": "/repairs/prices/add",
+        "example": "/repairs/prices/add",
+        "source": "vendor/lib/routing/app_router.dart:213",
+        "group": "repairs"
+      },
+      {
+        "label": "Repair Request",
+        "route": "/repairs/request/:id",
+        "example": "/repairs/request/demo-repair",
+        "source": "vendor/lib/routing/app_router.dart:216",
+        "group": "repairs"
+      },
+      {
+        "label": "Send Offer",
+        "route": "/repairs/request/:id/offer",
+        "example": "/repairs/request/demo-repair/offer",
+        "source": "vendor/lib/routing/app_router.dart:222",
+        "group": "repairs"
+      },
+      {
+        "label": "Set Price",
+        "route": "/repairs/request/:id/price",
+        "example": "/repairs/request/demo-repair/price",
+        "source": "vendor/lib/routing/app_router.dart:219",
+        "group": "repairs"
+      },
+      {
+        "label": "Returns",
+        "route": "/returns",
+        "example": "/returns",
+        "source": "vendor/lib/routing/app_router.dart:299",
+        "group": "returns"
+      },
+      {
+        "label": "Return Detail",
+        "route": "/returns/view/:id",
+        "example": "/returns/view/demo-order",
+        "source": "vendor/lib/routing/app_router.dart:303",
+        "group": "returns"
+      },
+      {
+        "label": "Return Chat",
+        "route": "/returns/view/:id/chat",
+        "example": "/returns/view/demo-order/chat",
+        "source": "vendor/lib/routing/app_router.dart:307",
+        "group": "returns"
+      },
+      {
+        "label": "Sell Leads",
+        "route": "/sell-leads",
+        "example": "/sell-leads",
+        "source": "vendor/lib/routing/app_router.dart:311",
+        "group": "sell-leads"
+      },
+      {
+        "label": "Sell Lead Detail",
+        "route": "/sell-leads/view/:id",
+        "example": "/sell-leads/view/demo-record",
+        "source": "vendor/lib/routing/app_router.dart:313",
+        "group": "sell-leads"
+      },
+      {
+        "label": "Sell Lead Chat",
+        "route": "/sell-leads/view/:id/chat",
+        "example": "/sell-leads/view/demo-record/chat",
+        "source": "vendor/lib/routing/app_router.dart:318",
+        "group": "sell-leads"
+      },
+      {
+        "label": "Settings",
+        "route": "/settings",
+        "example": "/settings",
+        "source": "vendor/lib/routing/app_router.dart:281",
+        "group": "settings"
+      },
+      {
+        "label": "Store Settings",
+        "route": "/store-settings",
+        "example": "/store-settings",
+        "source": "vendor/lib/routing/app_router.dart:290",
+        "group": "store-settings"
+      },
+      {
+        "label": "Subscription",
+        "route": "/subscription",
+        "example": "/subscription",
+        "source": "vendor/lib/routing/app_router.dart:293",
+        "group": "subscription"
+      },
+      {
+        "label": "Wallet",
+        "route": "/wallet",
+        "example": "/wallet",
+        "source": "vendor/lib/routing/app_router.dart:277",
+        "group": "wallet"
+      },
+      {
+        "label": "Welcome",
+        "route": "/welcome",
+        "example": "/welcome?inspect=1",
+        "source": "vendor/lib/routing/app_router.dart:120",
+        "group": "welcome"
+      },
+      {
+        "label": "Marketplace",
+        "route": "/wholesale",
+        "example": "/wholesale",
+        "source": "vendor/lib/routing/app_router.dart:323",
+        "group": "wholesale"
+      },
+      {
+        "label": "Wholesale Cart",
+        "route": "/wholesale/cart",
+        "example": "/wholesale/cart",
+        "source": "vendor/lib/routing/app_router.dart:326",
+        "group": "wholesale"
+      },
+      {
+        "label": "Wholesale Orders",
+        "route": "/wholesale/orders",
+        "example": "/wholesale/orders",
+        "source": "vendor/lib/routing/app_router.dart:329",
+        "group": "wholesale"
+      },
+      {
+        "label": "Wholesale Detail",
+        "route": "/wholesale/view/:id",
+        "example": "/wholesale/view/DEMO_FIRST_PRODUCT",
+        "source": "vendor/lib/routing/app_router.dart:332",
+        "group": "wholesale"
+      }
+    ]
+  },
+  "sections": {
+    "animated_banner": {
+      "enum": "animatedBanner",
+      "builder": "_buildAnimatedBanner",
+      "registry": "lib/features/home/presentation/widgets/section_registry.dart"
+    },
+    "fee_strip": {
+      "enum": "feeStrip",
+      "builder": "_buildFeeStrip",
+      "registry": "lib/features/home/presentation/widgets/section_registry.dart"
+    },
+    "seasonal_mosaic": {
+      "enum": "seasonalMosaic",
+      "builder": "_buildSeasonalMosaic",
+      "registry": "lib/features/home/presentation/widgets/section_registry.dart"
+    },
+    "round_category_icons": {
+      "enum": "roundCategoryIcons",
+      "builder": "_buildRoundCategoryIcons",
+      "registry": "lib/features/home/presentation/widgets/section_registry.dart"
+    },
+    "category_product_grid": {
+      "enum": "categoryProductGrid",
+      "builder": "_buildCategoryProductGrid",
+      "registry": "lib/features/home/presentation/widgets/section_registry.dart"
+    },
+    "product_carousel": {
+      "enum": "productCarousel",
+      "builder": "_buildProductCarousel",
+      "registry": "lib/features/home/presentation/widgets/section_registry.dart"
+    },
+    "trending_products": {
+      "enum": "trendingProducts",
+      "builder": "_buildTrendingProducts",
+      "registry": "lib/features/home/presentation/widgets/section_registry.dart"
+    },
+    "promo_carousel": {
+      "enum": "promoCarousel",
+      "builder": "_buildPromoCarousel",
+      "registry": "lib/features/home/presentation/widgets/section_registry.dart"
+    },
+    "bank_offers": {
+      "enum": "bankOffers",
+      "builder": "_buildBankOffers",
+      "registry": "lib/features/home/presentation/widgets/section_registry.dart"
+    },
+    "custom_banner": {
+      "enum": "customBanner",
+      "builder": "_buildCustomBanner",
+      "registry": "lib/features/home/presentation/widgets/section_registry.dart"
+    },
+    "text_header": {
+      "enum": "textHeader",
+      "builder": "_buildTextHeader",
+      "registry": "lib/features/home/presentation/widgets/section_registry.dart"
+    },
+    "arched_product_showcase": {
+      "enum": "archedProductShowcase",
+      "builder": "_buildArchedProductShowcase",
+      "registry": "lib/features/home/presentation/widgets/section_registry.dart"
+    },
+    "spacer": {
+      "enum": "spacer",
+      "builder": "_buildSpacer",
+      "registry": "lib/features/home/presentation/widgets/section_registry.dart"
+    },
+    "live_auction": {
+      "enum": "liveAuction",
+      "builder": "_buildLiveAuction",
+      "registry": "lib/features/home/presentation/widgets/section_registry.dart"
+    },
+    "deal_of_day": {
+      "enum": "dealOfDay",
+      "builder": "_buildDealOfDay",
+      "registry": "lib/features/home/presentation/widgets/section_registry.dart"
+    },
+    "recent_recommended": {
+      "enum": "recentRecommended",
+      "builder": "_buildRecentRecommended",
+      "registry": "lib/features/home/presentation/widgets/section_registry.dart"
+    },
+    "steal_deals": {
+      "enum": "stealDeals",
+      "builder": "_buildStealDeals",
+      "registry": "lib/features/home/presentation/widgets/section_registry.dart"
+    },
+    "collection_showcase": {
+      "enum": "collectionShowcase",
+      "builder": "_buildCollectionShowcase",
+      "registry": "lib/features/home/presentation/widgets/section_registry.dart"
+    },
+    "brand_spotlight": {
+      "enum": "brandSpotlight",
+      "builder": "_buildBrandSpotlight",
+      "registry": "lib/features/home/presentation/widgets/section_registry.dart"
+    },
+    "price_shop": {
+      "enum": "priceShop",
+      "builder": "_buildPriceShop",
+      "registry": "lib/features/home/presentation/widgets/section_registry.dart"
+    },
+    "category_hub": {
+      "enum": "categoryHub",
+      "builder": "_buildCategoryHub",
+      "registry": "lib/features/home/presentation/widgets/section_registry.dart"
+    },
+    "banner_rail": {
+      "enum": "bannerRail",
+      "builder": "_buildBannerRail",
+      "registry": "lib/features/home/presentation/widgets/section_registry.dart"
+    },
+    "top_brands": {
+      "enum": "topBrands",
+      "builder": "_buildTopBrands",
+      "registry": "lib/features/home/presentation/widgets/section_registry.dart"
+    },
+    "price_sale": {
+      "enum": "priceSale",
+      "builder": "_buildPriceSale",
+      "registry": "lib/features/home/presentation/widgets/section_registry.dart"
+    },
+    "oval_spotlight": {
+      "enum": "ovalSpotlight",
+      "builder": "_buildOvalSpotlight",
+      "registry": "lib/features/home/presentation/widgets/section_registry.dart"
+    },
+    "category_deals": {
+      "enum": "categoryDeals",
+      "builder": "_buildCategoryDeals",
+      "registry": "lib/features/home/presentation/widgets/section_registry.dart"
+    },
+    "shops_nearby": {
+      "enum": "shopsNearby",
+      "builder": "_buildShopsNearby",
+      "registry": "lib/features/home/presentation/widgets/section_registry.dart"
+    }
+  },
+  "home_slots": {
+    "customer": [
+      [
+        "Delivery header and store switcher",
+        "customer/lib/features/home/presentation/screens/home_screen.dart"
+      ],
+      [
+        "Subcategory tabs and search",
+        "customer/lib/features/home/presentation/screens/home_screen.dart"
+      ],
+      [
+        "Dynamic merchandising and sale sections",
+        "customer/lib/features/home/presentation/widgets/section_registry.dart"
+      ]
+    ],
+    "vendor": [
+      [
+        "Header, store and stats",
+        "vendor/lib/features/home/presentation/widgets/home_header_stats.dart"
+      ],
+      [
+        "Quick actions",
+        "vendor/lib/features/home/presentation/widgets/home_actions.dart"
+      ],
+      [
+        "Demand banner",
+        "vendor/lib/features/demand/presentation/widgets/demand_banner.dart"
+      ],
+      [
+        "Needs action",
+        "vendor/lib/features/home/presentation/widgets/needs_action.dart"
+      ],
+      [
+        "Abandoned carts",
+        "vendor/lib/features/abandoned_carts/presentation/widgets/home_cart_card.dart"
+      ],
+      [
+        "Live auctions and campaigns",
+        "vendor/lib/features/home/presentation/widgets/live_section.dart"
+      ],
+      [
+        "Wholesale marketplace",
+        "vendor/lib/features/home/presentation/widgets/home_marketplace.dart"
+      ],
+      [
+        "Bottom navigation",
+        "vendor/lib/features/home/presentation/widgets/home_bottom_nav.dart"
+      ]
+    ]
+  },
+  "areas": {
+    "storefront": {
+      "flutter": [
+        "customer/lib/features/home",
+        "customer/lib/features/categories",
+        "customer/lib/core/theme"
+      ],
+      "backend": [
+        "src/modules/themes",
+        "src/modules/admin/sections",
+        "src/modules/admin/theme-tabs"
+      ],
+      "dashboard": [
+        "src/components/builder",
+        "src/app/(dashboard)/themes/builder/page.tsx"
+      ],
+      "fixture": "service/fixtures/home.mjs"
+    },
+    "catalog": {
+      "flutter": [
+        "customer/lib/features/products",
+        "vendor/lib/features/products",
+        "vendor/lib/features/wholesale"
+      ],
+      "backend": [
+        "src/modules/products",
+        "src/modules/shop-products",
+        "src/modules/product-families"
+      ],
+      "dashboard": [
+        "src/app/(dashboard)/products",
+        "src/app/(dashboard)/shop-products/page.tsx"
+      ],
+      "fixture": "service/fixtures/catalog.mjs"
+    },
+    "repair": {
+      "flutter": [
+        "customer/lib/features/repair",
+        "vendor/lib/features/repairs",
+        "vendor/lib/features/repair_book"
+      ],
+      "backend": [
+        "src/modules/repairs"
+      ],
+      "dashboard": [
+        "src/app/(dashboard)/repairs",
+        "src/components/repairs"
+      ],
+      "fixture": "service/fixtures/repair.mjs"
+    },
+    "commerce": {
+      "flutter": [
+        "customer/lib/features/cart",
+        "customer/lib/features/checkout",
+        "vendor/lib/features/orders"
+      ],
+      "backend": [
+        "src/modules/cart",
+        "src/modules/cart-quote",
+        "src/modules/orders",
+        "src/modules/vendor-orders"
+      ],
+      "dashboard": [
+        "src/app/(dashboard)/orders",
+        "src/app/(dashboard)/seller-orders/page.tsx"
+      ],
+      "fixture": "service/demo-api.mjs"
+    },
+    "vendor_operations": {
+      "flutter": [
+        "vendor/lib/features/home",
+        "vendor/lib/features/demand",
+        "vendor/lib/features/profile",
+        "vendor/lib/features/campaigns",
+        "vendor/lib/features/auctions"
+      ],
+      "backend": [
+        "src/modules/vendors",
+        "src/modules/auctions",
+        "src/modules/vendor-procurement"
+      ],
+      "dashboard": [
+        "src/app/(dashboard)/vendors/page.tsx",
+        "src/app/(dashboard)/auctions"
+      ],
+      "fixture": "vendor/lib/features/*/data/demo_*_repository.dart"
+    }
+  }
+}

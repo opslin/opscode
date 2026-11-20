@@ -20,6 +20,7 @@ export const state = {
   notes: [],
   chats: [], // every chat, newest first
   running: new Set(), // chat ids with a turn in progress
+  waiting: new Map(), // chat id -> open cards (questions and approvals) that wait for the person
   chatSel: {}, // workspace id -> chat id | "new"
   mcp: [],
   computer: null, // computer-use status (see computer.status)

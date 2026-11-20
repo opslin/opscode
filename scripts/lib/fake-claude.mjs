@@ -65,6 +65,8 @@ const resumeAt = process.argv.indexOf("--resume");
 const session = resumeAt > 0 ? process.argv[resumeAt + 1] : "sess-claude-1";
 let buf = "";
 const waiters = new Map();
+let inputClosed = false;
+process.stdin.on("end", () => { inputClosed = true; });
 process.stdin.on("data", (d) => {
   buf += d;
   let i;
@@ -181,6 +183,50 @@ async function turn(prompt) {
   }
   if (prompt.includes("FAKE_AUTH_FAIL")) { out({ type: "result", subtype: "error_during_execution", is_error: true, result: "Not logged in · Please run /login", session_id: session, usage: {} }); process.exit(1); }
   if (prompt.includes("FAKE_FAIL")) { out({ type: "result", subtype: "error_during_execution", is_error: true, result: "it broke", session_id: session, usage: {} }); process.exit(1); }
+  // FAKE_ASK: Claude Code's own question tool (AskUserQuestion), answered through can_use_tool (the host fills `answers`).
+  if (prompt.includes("FAKE_ASK")) {
+    const input = { questions: [
+      { question: "Deploy the backend now?", header: "Deploy", multiSelect: false, options: [{ label: "Yes, deploy now (Recommended)", description: "Copies the changed files and restarts the API" }, { label: "Not yet", description: "Test locally first" }] },
+      { question: "Which apps get a new APK?", header: "Apps", multiSelect: true, options: [{ label: "Vendor app", description: "dealker-vendor-app" }, { label: "Customer app", description: "dealker-app" }] },
+    ] };
+    out({ type: "assistant", message: { content: [{ type: "tool_use", id: "toolu_ask", name: "AskUserQuestion", input }] }, parent_tool_use_id: null, session_id: session });
+    out({ type: "control_request", request_id: "req-ask", request: { subtype: "can_use_tool", tool_name: "AskUserQuestion", input, tool_use_id: "toolu_ask" } });
+    const r = await new Promise((res) => waiters.set("req-ask", res));
+    if (log) appendFileSync(log, JSON.stringify({ bin: "claude", ask: r.behavior, answers: r.updatedInput?.answers ?? null, message: r.message ?? null }) + "\n");
+    const said = r.behavior === "allow" ? Object.entries(r.updatedInput.answers).map(([q, a]) => `${q} = ${[].concat(a).join(" + ")}`).join("; ") : r.message;
+    out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "toolu_ask", content: said, is_error: r.behavior !== "allow" }] }, session_id: session });
+    text(r.behavior === "allow" ? `Going on with: ${said}` : `Deciding myself: ${said}`);
+    result();
+    return;
+  }
+  // FAKE_BG / FAKE_BG_SERVER / FAKE_BG_SILENT: a background job, the way Claude Code reports it (system task_started, then
+  // task_notification when it ends). FAKE_BG: after the first result the job ends, Claude Code wakes up and asks to run one
+  // more command (can_use_tool), which fails with "Stream closed" if its input was already closed. FAKE_BG_SERVER: a dev
+  // server in the background (never ends). FAKE_BG_SILENT: a job that never reports back.
+  if (/FAKE_BG(_SERVER|_SILENT)?\b/.test(prompt)) {
+    const server = prompt.includes("FAKE_BG_SERVER");
+    const command = server ? "npm run dev" : "flutter build apk --release";
+    out({ type: "assistant", message: { content: [{ type: "tool_use", id: "toolu_bg", name: "Bash", input: { command, run_in_background: true } }] }, parent_tool_use_id: null, session_id: session });
+    out({ type: "system", subtype: "task_started", task_id: "task-bg", tool_use_id: "toolu_bg", description: server ? "Dev server" : "Release build", task_type: "local_bash", session_id: session });
+    out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "toolu_bg", content: "Command running in background with ID: task-bg" }] }, session_id: session });
+    text("Started it in the background.");
+    result();
+    if (!/FAKE_BG\b/.test(prompt)) return;
+    await new Promise((r) => setTimeout(r, 400));
+    out({ type: "system", subtype: "task_notification", task_id: "task-bg", tool_use_id: "toolu_bg", status: "completed", summary: "Build finished", session_id: session });
+    out({ type: "assistant", message: { content: [{ type: "tool_use", id: "toolu_bg2", name: "Bash", input: { command: "ls build" } }] }, parent_tool_use_id: null, session_id: session });
+    let r;
+    if (inputClosed) r = { behavior: "deny", message: "Tool permission request failed: AbortError: Stream closed" };
+    else {
+      out({ type: "control_request", request_id: "req-bg2", request: { subtype: "can_use_tool", tool_name: "Bash", input: { command: "ls build" }, tool_use_id: "toolu_bg2" } });
+      r = await new Promise((res) => waiters.set("req-bg2", res));
+    }
+    if (log) appendFileSync(log, JSON.stringify({ bin: "claude", bg_after: r.behavior, message: r.message ?? null }) + "\n");
+    out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "toolu_bg2", content: r.behavior === "allow" ? "app-release.apk" : r.message, is_error: r.behavior !== "allow" }] }, session_id: session });
+    text(r.behavior === "allow" ? " The build is done: app-release.apk." : ` ${r.message}`);
+    result();
+    return;
+  }
   // FAKE_BASH=<command>: ask to run a shell command the way Claude Code does (can_use_tool), report what came back.
   const bash = /FAKE_BASH=«([^»]*)»/.exec(prompt);
   if (bash) {

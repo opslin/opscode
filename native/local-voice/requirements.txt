@@ -1,0 +1,13 @@
+# Runtime for Kitten's ONNX weights and the quantized whisper.cpp model.
+huggingface-hub==0.36.2
+langid==1.1.6
+numpy==2.5.5
+onnxruntime==1.23.2
+pywhispercpp==1.5.1
+misaki==0.9.4
+espeakng-loader==0.2.4
+phonemizer==3.6.0
+num2words==0.5.14
+pyopenjtalk-plus==0.4.1.post10
+spacy==3.8.14
+en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl

@@ -14,6 +14,7 @@ import { createOrb } from "./orb.js";
 import { createVoiceBot } from "./voicebot.js";
 import { startCapture, micMessage } from "./voicecapture.js";
 import { createVoicePlayer } from "./voiceplayer.js";
+import { ensureSpeechModel } from "./speechmodel.js";
 import { ensureVoice } from "./speak.js";
 import { pixelBurst, pixelReveal, pixelVanish } from "./pixelfx.js";
 import { openModelPicker, engineMark, modelName, catalog } from "./modelpicker.js";
@@ -23,14 +24,28 @@ const wait = (ms) => new Promise((r) => setTimeout(r, reduced() ? 0 : ms));
 const clip = (t, n) => (t.length > n ? `${t.slice(0, n - 1)}…` : t);
 // Every engine can be the model you talk to (it only converses, searches and briefs; the worker does the coding).
 const BRAIN_ENGINES = ["claude-code", "codex", "antigravity", "qoder", "api"];
-// The Pocket TTS voices that come with the model (runtime/tts VOICES).
-const VOICES = [
-  { id: "bria", name: "Bria", note: "Warm, clear", sample: "Hi, I'm Bria. Tell me what you want built, and I'll brief the worker and keep you posted." },
-  { id: "loona", name: "Loona", note: "Soft, bright", sample: "Hey, I'm Loona. Just say what you need, and I'll get the worker started on it." },
-];
+const displayLanguage = new Intl.DisplayNames(["en"], { type: "language" });
+const PREVIEW = {
+  en: "Hi! I'm here to help. Tell me what you want to build.",
+  hi: "नमस्ते! मैं आपकी मदद के लिए यहाँ हूँ। बताइए, आप क्या बनाना चाहते हैं?",
+  de: "Hallo! Ich bin hier, um dir zu helfen.",
+  es: "¡Hola! Estoy aquí para ayudarte.",
+  it: "Ciao! Sono qui per aiutarti.",
+  pt: "Olá! Estou aqui para ajudar.",
+  ru: "Привет! Я здесь, чтобы помочь.",
+  da: "Hej! Jeg er her for at hjælpe.",
+  fi: "Hei! Olen täällä auttamassa.",
+  fr: "Bonjour ! Je suis là pour vous aider.",
+  ja: "こんにちは。何を作りたいですか？",
+  ko: "안녕하세요! 무엇을 만들고 싶으세요?",
+  nl: "Hallo! Ik ben hier om je te helpen.",
+  sv: "Hej! Jag är här för att hjälpa dig.",
+  sw: "Habari! Niko hapa kukusaidia.",
+  tr: "Merhaba! Sana yardım etmek için buradayım.",
+};
 
 let statusP = null;
-/** Can this computer do voice mode (a speech helper; on a Mac, Apple's recognizer)? */
+/** Can this computer do voice mode (the local speech runtime)? */
 export function voiceModeAvailable(refresh = false) {
   if (!state.client) return Promise.resolve(false); // not connected yet: ask again later, do not remember "no"
   if (!statusP || refresh) {
@@ -317,15 +332,23 @@ export function createVoiceMode(o) {
   chip.addEventListener("click", pickBrain);
   // (painted by the chat once its engine is known: repaintChip())
 
-  // ---- the agent's voice: which Pocket TTS voice, speed and pitch (settings voice_tts_*) ---------------------------------------------
+  // The agent can choose a Kitten voice independently of read-aloud.
+  let allVoices = [];
   const tone = () => { const s = state.settings ?? {}; return { speed: s.voice_tts_speed ?? 1, pitch: s.voice_tts_pitch ?? 0 }; };
-  const voiceId = () => { const s = state.settings ?? {}; return s.voice_tts_voice || s.tts_voice || VOICES[0].id; };
+  const voiceId = () => state.settings?.voice_tts_voice || state.settings?.tts_voice || "auto";
+  const voiceOptions = () => {
+    const language = state.settings?.tts_locale;
+    const chosen = allVoices.find((v) => v.id === voiceId());
+    const languages = language && language !== "auto" ? [language] : ["en", "hi", chosen?.language];
+    return allVoices.filter((v) => languages.includes(v.language));
+  };
+  void call("tts.status").then((st) => { allVoices = st.voices; paintVoiceChip(); }).catch(() => {});
   const voiceChip = h("button", { class: "cmp-voice-tts", type: "button", "aria-label": "Agent voice", "aria-haspopup": "dialog", "aria-expanded": "false", title: "How the agent sounds: voice, speed and pitch" });
   function paintVoiceChip() {
-    const v = VOICES.find((x) => x.id === voiceId()) ?? VOICES[0];
+    const v = voiceOptions().find((x) => x.id === voiceId());
     const t = tone();
     const tuned = Math.abs(t.speed - 1) > 0.001 || Math.abs(t.pitch) > 0.001;
-    voiceChip.replaceChildren(...[h("span", { class: "vtc-bars", "aria-hidden": "true" }, h("i"), h("i"), h("i"), h("i")), h("span", { class: "cmp-model-name" }, v.name), tuned ? h("span", { class: "vtc-tuned", title: "Speed or pitch changed" }) : null, icon("chevron-down", "icon chip-caret")].filter(Boolean));
+    voiceChip.replaceChildren(...[h("span", { class: "vtc-bars", "aria-hidden": "true" }, h("i"), h("i"), h("i"), h("i")), h("span", { class: "cmp-model-name" }, v?.name ?? "Automatic"), tuned ? h("span", { class: "vtc-tuned", title: "Speed or pitch changed" }) : null, icon("chevron-down", "icon chip-caret")].filter(Boolean));
   }
   let saveTimer = null;
   const pending = {};
@@ -342,14 +365,15 @@ export function createVoiceMode(o) {
   }
   async function preview(id = voiceId()) {
     if (!session) return;
-    const v = VOICES.find((x) => x.id === id) ?? VOICES[0];
+    const v = voiceOptions().find((x) => x.id === id) ?? voiceOptions()[0];
+    if (!v) return;
     if (agent === "thinking") { flash("Try the voice when it has finished answering."); return; }
     if (player.playing && !previewing) { void call("voiceagent.interrupt", { session }).catch(() => {}); }
     previewing = true;
     clearTimeout(previewEnd);
     panel?.sync();
     try {
-      const r = await call("tts.speak", { text: v.sample, voice: v.id });
+      const r = await call("tts.speak", { text: PREVIEW[v.language], voice: v.id });
       player.open(r.session);
     } catch (e) { previewing = false; panel?.sync(); toast(e.message); }
   }
@@ -366,18 +390,18 @@ export function createVoiceMode(o) {
     const pitchOut = h("output", { class: "vtone-val" });
     const speed = h("input", { type: "range", min: "0.8", max: "1.4", step: "0.05", class: "vtone-range", "aria-label": "Speed" });
     const pitch = h("input", { type: "range", min: "-4", max: "4", step: "0.5", class: "vtone-range", "aria-label": "Pitch" });
-    const cards = VOICES.map((v) => {
+    const cards = voiceOptions().map((v) => {
       const play = h("span", { class: "vtone-play", "aria-hidden": "true" }, icon("play"));
       const b = h("button", { class: "vtone-voice", type: "button", role: "radio", dataset: { voice: v.id }, onclick: () => { saveVoice({ voice_tts_voice: v.id }); sync(); void preview(v.id); } },
         h("span", { class: "vtone-ava", "aria-hidden": "true" }, ...Array.from({ length: 5 }, () => h("i"))),
-        h("span", { class: "vtone-vtext" }, h("span", { class: "vtone-vname" }, v.name), h("span", { class: "vtone-vnote" }, v.note)),
+        h("span", { class: "vtone-vtext" }, h("span", { class: "vtone-vname" }, v.name), h("span", { class: "vtone-vnote" }, displayLanguage.of(v.language))),
         play);
       return b;
     });
     const sampleBtn = h("button", { class: "vtone-sample", type: "button", onclick: () => (previewing ? stopPreview() : void preview()) });
     const reset = h("button", { class: "vtone-reset", type: "button", onclick: () => { saveVoice({ voice_tts_speed: 1, voice_tts_pitch: 0 }); sync(); } }, "Reset");
     const el = h("div", { class: "vtone", role: "dialog", "aria-label": "Agent voice" },
-      h("div", { class: "vtone-head" }, h("span", { class: "vtone-title" }, "Agent voice"), h("span", { class: "vtone-sub" }, "Pocket TTS · on this Mac")),
+      h("div", { class: "vtone-head" }, h("span", { class: "vtone-title" }, "Agent voice"), h("span", { class: "vtone-sub" }, "Kitten TTS 2 Mini · local")),
       h("div", { class: "vtone-voices", role: "radiogroup", "aria-label": "Voice" }, ...cards),
       row("Speed", speedOut, speed, "Slower", "Faster"),
       row("Pitch", pitchOut, pitch, "Deeper", "Higher"),
@@ -393,7 +417,7 @@ export function createVoiceMode(o) {
       for (const c of cards) c.setAttribute("aria-checked", String(c.dataset.voice === id));
       el.dataset.previewing = String(previewing);
       sampleBtn.replaceChildren(icon(previewing ? "stop" : "play"), h("span", {}, previewing ? "Stop" : "Play a sample"));
-      reset.disabled = Math.abs(t.speed - 1) < 0.001 && Math.abs(t.pitch) < 0.001;
+      reset.disabled = !state.settings?.voice_tts_voice && Math.abs(t.speed - 1) < 0.001 && Math.abs(t.pitch) < 0.001;
       for (const r of [speed, pitch]) r.style.setProperty("--fill", `${((Number(r.value) - Number(r.min)) / (Number(r.max) - Number(r.min))) * 100}%`);
     }
     speed.addEventListener("input", () => { saveVoice({ voice_tts_speed: Math.round(Number(speed.value) * 100) / 100 }); sync(); });
@@ -458,7 +482,8 @@ export function createVoiceMode(o) {
       case "tool": flash(/Brief/i.test(v.summary ?? "") ? "Briefing the worker…" : /Check/i.test(v.summary ?? "") ? "Checking on the worker…" : /Stop/i.test(v.summary ?? "") ? "Stopping the worker…" : clip(v.summary ?? "Working…", 48)); break;
       case "worker": upsertWorker(v); break;
       case "act": act(v); break;
-      case "approval": flash(v.allow ? "Approved: it is going ahead." : "Refused: it will not do that."); break;
+      case "approval": flash(v.auto ? "Allowed on its own (routine step)." : v.allow ? "Approved: it is going ahead." : "Refused: it will not do that."); break;
+      case "trust": flash(v.on ? "Self-approval on: only risky steps will ask you." : "Self-approval off: every approval asks you again."); break;
       case "bind": o.bindChat(v.chat_id); break;
       case "error": toast(v.code === "mic_denied" ? micMessage({ name: "NotAllowedError" }) : v.message ?? "Voice mode had a problem.", 7000); break;
       case "ended": if (phase === "on" || phase === "entering") void finish(v.why !== "stopped"); break;
@@ -528,9 +553,7 @@ export function createVoiceMode(o) {
     phase = "entering";
     early.length = 0;
     try {
-      if (!(await voiceModeAvailable(true))) { toast(navigator.platform.toLowerCase().includes("mac") ? "Voice mode needs macOS 26 (Apple's on-device speech recognition)." : "Voice mode could not start the speech engine on this computer."); phase = "off"; return; }
-      // The agent speaks with Pocket TTS: asks before the one-time download.
-      if (!(await ensureVoice())) { phase = "off"; return; }
+      if (!(await ensureSpeechModel()) || !(await ensureVoice())) { phase = "off"; return; }
     } catch (e) { toast(e.message); phase = "off"; return; }
     o.onActive?.(true);
     const anim = animateIn();

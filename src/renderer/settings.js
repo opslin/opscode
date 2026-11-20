@@ -9,7 +9,8 @@ import { confirmDialog, showDialog, closeDialog } from "./dialogs.js";
 import { checking, engineCard, reloadAccounts } from "./accounts.js";
 
 export const SECTIONS = [
-  { id: "general", label: "General", icon: "sliders", keywords: "name awake sleep app version runtime" },
+  { id: "general", label: "General", icon: "sliders", keywords: "name awake sleep app version runtime voice microphone dictation speech language" },
+  { id: "devices", label: "Devices", icon: "monitor", keywords: "android phone pair qr code internet relay connection disconnect" },
   { id: "appearance", label: "Appearance", icon: "sun", keywords: "theme light dark text size density font" },
   { id: "models", label: "Models & keys", icon: "chat", keywords: "api key provider anthropic openai model base url gateway openrouter ollama secret" },
   { id: "memory", label: "Memory", icon: "file", keywords: "notes remember brief draft pin scope" },
@@ -56,9 +57,7 @@ function general() {
           if (next === "full" && !(await confirmDialog({ title: "Start new chats with full access?", body: "Agents will edit files and run commands without asking, in every new chat. They still cannot leave a project's folder.", confirm: "Use full access", danger: true }))) { e.target.value = state.settings.default_mode; return; }
           void patch({ default_mode: next });
         } }, ...MODES.map((m) => h("option", { value: m.id, selected: m.id === s.default_mode }, m.label))))),
-    group("Voice",
-      row("Voice language", "For the mic in the message box. Speech becomes text on this Mac with Apple's recognizer; Auto uses this Mac's language and region.", voiceLanguage(s.voice_locale ?? "auto", (v) => patch({ voice_locale: v }))),
-      ...readAloudRows(s, patch)),
+    group("Voice", ...voiceRows(s)),
     group("This app",
       row("Keep this computer awake", "While agents are working.", toggle(s.keep_awake, (on) => patch({ keep_awake: on }), "Keep awake")),
       row("Version", null, h("code", {}, rt ? `${rt.appName} ${rt.appVersion}` : "—")),
@@ -279,6 +278,22 @@ function mcp() {
 // ---- computer use -----------------------------------------------------------------------
 const compUi = { apps: null, name: "", rule: "always" };
 
+// While Accessibility is not on yet, check again every 2 s (the page flips to Granted as soon as the person turns it on).
+let accessTimer = 0;
+function watchAccess(on) {
+  if (!on) { clearInterval(accessTimer); accessTimer = 0; return; }
+  if (accessTimer) return;
+  let n = 0;
+  accessTimer = setInterval(async () => {
+    if (++n > 90 || document.hidden) { if (n > 90) { clearInterval(accessTimer); accessTimer = 0; } return; }
+    try {
+      const { status } = await state.client.call("computer.status");
+      if (status?.permissions?.accessibility === true && status?.permissions?.screen_recording !== false) { clearInterval(accessTimer); accessTimer = 0; state.computer = status; rerender(true); }
+      else if (status && JSON.stringify(status.permissions) !== JSON.stringify(state.computer?.permissions)) { state.computer = status; rerender(true); }
+    } catch { /* runtime busy */ }
+  }, 2000);
+}
+
 function computer() {
   const c = state.computer;
   if (!c) return [header("Computer use", "Loading…")];
@@ -286,6 +301,9 @@ function computer() {
 
   const pill = (v, yes, no, unknown) => h("span", { class: `pill ${v === true ? "pill-ok" : v === false ? "pill-warn" : ""}` }, v === true ? yes : v === false ? no : unknown);
   const open = (pane) => call("computer.open_settings", { pane });
+  // Accessibility: macOS's own prompt adds Opscode to the list; this page then checks every 2 s until it is on.
+  const allow = async (pane = "accessibility") => { try { await state.client.call("computer.request_access", { pane }); toast(`Opscode was added fresh: turn it on in the ${pane === "screen" ? "Screen Recording" : "Accessibility"} list that opened.`); } catch (e) { toast(e.message); } };
+  watchAccess(c.permissions.accessibility !== true || c.permissions.screen_recording === false);
   const name = h("input", { class: "input", placeholder: "App name, e.g. Notes", maxLength: 120, autocomplete: "off", spellcheck: false, value: compUi.name, "aria-label": "App name", oninput: (e) => { compUi.name = e.target.value; } });
   const add = async () => {
     const n = compUi.name.trim();
@@ -307,15 +325,15 @@ function computer() {
   return [
     header("Computer use", "Let agents see your screen and use apps on this Mac."),
     group(null,
-      row("Let agents use apps on this Mac", "Off by default. Agents can take screenshots, click, type and press keys. Each action tells you which app is in front and asks first, unless you always allow that app. Hidden in read-only chats.", toggle(c.enabled, (on) => call("computer.set_enabled", { enabled: on }), "Let agents use apps on this Mac"))),
+      row("Let agents use apps on this Mac", "Off by default. Agents (chats, voice mode and the notch's On my Mac) read apps, click, type and press keys. Only risky steps ask you first: buying, paying, sending, deleting, submitting, quitting apps, or typing card numbers. Terminals, password managers and system prompts are never used. Hidden in read-only chats.", toggle(c.enabled, (on) => call("computer.set_enabled", { enabled: on }), "Let agents use apps on this Mac"))),
     group("Permissions",
-      row("Accessibility", "Needed to click and type. Add this app in System Settings → Privacy & Security → Accessibility. While developing it appears as “Electron”.", h("div", { class: "row-actions" }, pill(c.permissions.accessibility, "Granted", "Not granted", "Unknown"), h("button", { class: "btn btn-ghost btn-sm", type: "button", onclick: () => open("accessibility") }, "Open settings"))),
-      row("Screen Recording", "Needed for screenshots. It cannot be checked in advance: if screenshots come back blank or show only your wallpaper, grant it here.", h("button", { class: "btn btn-ghost btn-sm", type: "button", onclick: () => open("screen") }, "Open settings"))),
+      row("Accessibility", "Needed to read apps, click and type. Click Allow…: macOS adds Opscode to Privacy & Security → Accessibility and you turn it on there. If Opscode already shows as on there but this says Not granted, Allow… replaces that old entry with a fresh one. While developing it appears as “Electron”.", h("div", { class: "row-actions" }, pill(c.permissions.accessibility, "Granted", "Not granted", "Unknown"), c.permissions.accessibility === true ? h("button", { class: "btn btn-ghost btn-sm", type: "button", onclick: () => open("accessibility") }, "Open settings") : h("button", { class: "btn btn-primary btn-sm", type: "button", onclick: allow }, "Allow…"))),
+      row("Screen Recording", "Only needed when an agent takes a screenshot to see how something looks (reading and clicking apps does not need it). Click Allow…: macOS adds Opscode to the list and you turn it on there. If Opscode already shows as on but this says Not granted, Allow… replaces that old entry.", h("div", { class: "row-actions" }, pill(c.permissions.screen_recording, "Granted", "Not granted", "Unknown"), c.permissions.screen_recording === true ? h("button", { class: "btn btn-ghost btn-sm", type: "button", onclick: () => open("screen") }, "Open settings") : h("button", { class: "btn btn-primary btn-sm", type: "button", onclick: () => allow("screen") }, "Allow…")))),
     group("Apps",
       h("div", { class: "set-form" }, name,
         segmented(compUi.rule, [["always", "Always allow"], ["never", "Never"]], (v) => { compUi.rule = v; rerender(true); }, "Rule"),
         h("button", { class: "btn btn-primary btn-sm", type: "button", onclick: add }, icon("plus"), "Add")),
-      h("div", { class: "set-row-help pad" }, "Apps without a rule ask every time. “Always allow” skips the question for that app, so only allow apps you are comfortable with an agent using."),
+      h("div", { class: "set-row-help pad" }, "“Never” blocks an app completely. “Always allow” also skips the question for risky steps in that app, so use it only for apps you trust an agent with."),
       h("div", { class: "pad chips" },
         h("button", { class: "btn btn-ghost btn-sm", type: "button", onclick: loadApps }, compUi.apps ? "Refresh running apps" : "Pick from running apps"),
         ...(compUi.apps ?? []).map((a) => a.denied
@@ -591,7 +609,72 @@ function importPage() {
   ];
 }
 
-const BUILDERS = { general, appearance, models, memory, mcp, skills, agents, plugins, computer, import: importPage, keyboard };
+function devices() {
+  const api = state.bridge?.mobile;
+  const list = h("div", { class: "set-card" });
+  const relay = h("div", { class: "set-card" });
+  const error = h("p", { class: "set-row-help mobile-devices-error", role: "status" });
+  let snapshot;
+  let busy = false;
+  const button = (label, action, primary = false) => h("button", {
+    type: "button", class: `btn ${primary ? "btn-primary" : "btn-ghost"} btn-sm`, disabled: busy, onclick: action,
+  }, label);
+  const run = async (action, pending = "") => {
+    if (busy) return;
+    busy = true;
+    error.textContent = pending;
+    draw();
+    try { snapshot = await action(); error.textContent = ""; }
+    catch (e) { error.textContent = e.message.replace(/^Error invoking remote method '[^']+': Error: /, ""); }
+    finally { busy = false; draw(); }
+  };
+  function draw() {
+    if (!snapshot) {
+      list.replaceChildren(row("No devices connected", api ? "Pairing is available in the macOS app while Opscode is running." : "", null));
+      return;
+    }
+    const devices = snapshot.devices;
+    list.replaceChildren(...(devices.length ? devices.map((device) => {
+      const when = device.pairedAt ? new Date(device.pairedAt).toLocaleDateString() : "";
+      return row(device.name, `Android${when ? " · Paired " + when : ""}`,
+        h("div", { class: "row-actions mobile-device-actions" },
+          h("span", { class: `pill ${device.connected ? "pill-ok" : "mobile-device-offline"}` },
+            device.connected ? "✓ Connected" : "Offline"),
+          button("Remove", async () => {
+            if (await confirmDialog({ title: `Remove ${device.name}?`, body: "This phone will need a new QR to reconnect.", confirm: "Remove device", danger: true })) {
+              await run(() => api.revoke(device.id));
+            }
+          })));
+    }) : [row("No paired devices", "Scan the QR on Android to pair this Mac.", null)]));
+    const relayStatus = snapshot.relay === "online" ? "relay.shotlin.in · Online"
+      : snapshot.relay === "connecting" ? "Connecting to relay.shotlin.in…"
+        : "The Mac’s relay credential is unavailable.";
+    relay.replaceChildren(row("Opscode relay", relayStatus,
+      button("Show pairing QR", () => run(api.pair, "Creating pairing QR…"), true)));
+  }
+  let signature;
+  const refresh = async () => {
+    if (!list.isConnected || !api) return;
+    try {
+      if (!busy) {
+        const next = await api.status();
+        const key = JSON.stringify(next);
+        if (!busy && key !== signature) { snapshot = next; signature = key; draw(); }
+      }
+    } catch { /* A subsequent refresh can reconnect. */ }
+    setTimeout(refresh, 2500);
+  };
+  draw();
+  setTimeout(refresh, 0);
+  return [
+    header("Devices", "Pair Android phones to review Mac activity and approve tasks."),
+    h("section", { class: "set-group" }, h("h3", { class: "set-group-title" }, "Pair a device"), relay),
+    h("section", { class: "set-group" }, h("h3", { class: "set-group-title" }, "Paired devices"), list),
+    error,
+  ];
+}
+
+const BUILDERS = { general, devices, appearance, models, memory, mcp, skills, agents, plugins, computer, import: importPage, keyboard };
 
 // ---- page -----------------------------------------------------------------------------------
 let host = null;
@@ -613,7 +696,8 @@ export function rerender(force = false) {
   const top = scroller?.scrollTop ?? 0;
   const open = new Set([...host.querySelectorAll("details[open]")].map((d) => d.dataset.provider));
   const build = BUILDERS[state.section] ?? general;
-  host.replaceChildren(h("div", { class: "settings-scroll" }, h("div", { class: "settings-col", dataset: { section: state.section } }, ...build())));
+  const content = state.settings ? build() : [h("p", { class: "set-row-help", role: "status" }, "Loading settings…")];
+  host.replaceChildren(h("div", { class: "settings-scroll" }, h("div", { class: "settings-col", dataset: { section: state.section } }, ...content)));
   for (const d of host.querySelectorAll("details")) if (open.has(d.dataset.provider)) d.open = true;
   host.querySelector(".settings-scroll").scrollTop = top;
 }
@@ -622,59 +706,91 @@ export function rerender(force = false) {
 // Skills + Plugins
 // =====================================================================================
 
-/** The voice language menu: Auto + the languages Apple's on-device recognizer has on this Mac (filled when known). */
-function voiceLanguage(current, onChange) {
-  const names = (() => { try { return new Intl.DisplayNames(["en"], { type: "language" }); } catch { return null; } })();
-  const label = (id) => { try { return names?.of(id) ?? id; } catch { return id; } };
-  const sel = h("select", { class: "input select", "aria-label": "Voice language", onchange: (e) => void onChange(e.target.value) },
-    h("option", { value: "auto", selected: current === "auto" }, "Auto (this Mac's language)"),
-    current !== "auto" ? h("option", { value: current, selected: true }, label(current)) : null);
-  void state.client?.call("voice.locales", {}).then((r) => {
-    const ids = [...new Set([...(r.speech ?? []), ...(r.dictation ?? [])])].sort((a, b) => label(a).localeCompare(label(b)));
-    if (!ids.length) return;
-    sel.replaceChildren(h("option", { value: "auto", selected: current === "auto" }, "Auto (this Mac's language)"), ...ids.map((id) => h("option", { value: id, selected: id === current }, `${label(id)}${(r.speech ?? []).includes(id) ? "" : " (dictation)"}`)));
-  }).catch(() => {});
-  return sel;
+const voiceLanguageNames = new Intl.DisplayNames(["en"], { type: "language" });
+const voiceLanguageName = (id) => { try { return voiceLanguageNames.of(id) ?? id; } catch { return id; } };
+
+function languageOptions(ids, current, autoLabel) {
+  const list = [...new Set([...ids, ...(current === "auto" ? [] : [current])])];
+  list.sort((a, b) => voiceLanguageName(a).localeCompare(voiceLanguageName(b)));
+  return [
+    h("option", { value: "auto", selected: current === "auto" }, autoLabel),
+    ...list.map((id) => h("option", { value: id, selected: id === current }, voiceLanguageName(id))),
+  ];
 }
 
-
-/** Read-aloud rows (Pocket TTS on this Mac): the voice, the speed, and getting or removing the 212 MB of voice files. */
-function readAloudRows(s, patch) {
-  const status = h("div", { class: "set-row-help", dataset: { tts: "status" } }, "Checking…");
-  const action = h("button", { class: "btn btn-sm", type: "button", dataset: { tts: "action" }, disabled: true }, "…");
-  const voiceSel = h("select", { class: "input select", "aria-label": "Read-aloud voice", onchange: (e) => void patch({ tts_voice: e.target.value }) }, h("option", { value: s.tts_voice ?? "bria" }, s.tts_voice ?? "bria"));
-  const speedSel = h("select", { class: "input select", "aria-label": "Read-aloud speed", onchange: (e) => void patch({ tts_speed: Number(e.target.value) }) },
-    ...[1, 1.25, 1.5, 1.75].map((v) => h("option", { value: String(v), selected: v === (s.tts_speed ?? 1) }, `${v}×`)));
-  const mb = (n) => `${Math.round(n / 1e6)} MB`;
-  const paint = (st) => {
-    voiceSel.replaceChildren(...st.voices.map((v) => h("option", { value: v.id, selected: v.id === (s.tts_voice ?? "bria") }, v.name)));
-    voiceSel.disabled = speedSel.disabled = !st.installed;
-    if (st.installing) { status.textContent = `${st.installing.phase === "download" ? "Downloading" : "Getting ready"}… ${Math.round(st.installing.progress * 100)}%`; action.disabled = true; action.textContent = "Downloading…"; return; }
-    status.textContent = st.installed
-      ? `Installed (${mb(st.disk_bytes)} on this Mac). Replies are read with ${st.engine}; nothing leaves your Mac.`
-      : `Not downloaded yet. ${st.engine} is a small voice that runs on this Mac (${mb(st.download_bytes)} download, once). Pressing 🔊 on a reply asks first.`;
-    action.disabled = false;
-    action.textContent = st.installed ? "Remove voice files" : `Download ${mb(st.download_bytes)}`;
-    action.onclick = async () => {
+function modelControl(key, label) {
+  const status = h("div", { class: "set-row-help", dataset: { [key]: "status" } }, "Checking…");
+  const action = h("button", { class: "btn btn-sm", type: "button", dataset: { [key]: "action" }, disabled: true }, "…");
+  const refresh = async () => {
+    try {
+      const st = await state.client.call(`${key}.status`, {});
+      const mb = Math.round((st.download_bytes ?? 0) / 1e6);
       action.disabled = true;
-      try {
-        if (st.installed) { await state.client.call("tts.remove", {}); toast("Voice files removed"); }
-        else {
-          const yes = await confirmDialog({ title: "Download the Pocket TTS voice?", body: `${mb(st.download_bytes)} from the sherpa-onnx project on GitHub, checked before use, about ${mb(st.disk_bytes)} on disk. ${st.license}`, confirm: `Download ${mb(st.download_bytes)}` });
-          if (!yes) { action.disabled = false; return; }
-          await state.client.call("tts.install", {});
-        }
-      } catch (e) { toast(e.message); }
-      void refresh();
-    };
+      if (st.available === false) {
+        status.textContent = st.error || "The local voice runtime is unavailable.";
+        action.textContent = "Unavailable";
+        return;
+      }
+      if (st.installing) {
+        status.textContent = `Downloading… ${Math.round(st.installing.progress * 100)}%`;
+        action.textContent = "Downloading…";
+        return;
+      }
+      status.textContent = st.installed ? `Installed · ${mb} MB · runs on this computer`
+        : st.install_error ? `Download failed. ${st.install_error}` : `One-time download · ${mb} MB · runs on this computer`;
+      action.textContent = st.installed ? "Remove model" : `Download ${mb} MB`;
+      action.disabled = false;
+      action.onclick = async () => {
+        action.disabled = true;
+        try { await state.client.call(`${key}.${st.installed ? "remove" : "install"}`, {}); }
+        catch (e) { toast(e.message); }
+        void refresh();
+      };
+    } catch (e) {
+      status.textContent = e.message;
+      action.textContent = "Unavailable";
+      action.disabled = true;
+    }
   };
-  const refresh = () => state.client?.call("tts.status", {}).then(paint).catch(() => { status.textContent = "Read aloud is not available."; });
-  const onEv = (e) => { if (!status.isConnected) { window.removeEventListener("opscode:tts", onEv); return; } if (e.detail?.ev === "install") void refresh(); };
-  window.addEventListener("opscode:tts", onEv);
+  const listener = (e) => {
+    if (!status.isConnected) { window.removeEventListener(`opscode:${key}`, listener); return; }
+    if (e.detail?.ev === "install") void refresh();
+  };
+  window.addEventListener(`opscode:${key}`, listener);
   void refresh();
+  return row(label, status, action);
+}
+
+function voiceRows(s) {
+  const inputLanguage = s.voice_locale ?? "auto";
+  const input = h("select", { class: "input select", "aria-label": "Microphone language", onchange: (e) => void patch({ voice_locale: e.target.value }) },
+    ...languageOptions(["en", "hi"], inputLanguage, "Auto detect"));
+  void state.client.call("voice.locales", {}).then((r) => {
+    const base = inputLanguage.split("-")[0];
+    const current = r.speech.includes(base) ? base : inputLanguage;
+    input.replaceChildren(...languageOptions(r.speech, current, "Auto detect"));
+  }).catch(() => {});
+
+  const outputLanguage = s.tts_locale ?? "auto";
+  const output = h("select", { class: "input select", "aria-label": "Spoken reply language", onchange: (e) => void patch({ tts_locale: e.target.value }) },
+    ...languageOptions(["en", "hi"], outputLanguage, "Auto · follow the reply"));
+  const voice = h("select", { class: "input select", "aria-label": "Speaking voice", onchange: (e) => void patch({ tts_voice: e.target.value }) },
+    h("option", { value: "auto" }, "Automatic"));
+  const speed = h("select", { class: "input select", "aria-label": "Read-aloud speed", onchange: (e) => void patch({ tts_speed: Number(e.target.value) }) },
+    ...[1, 1.25, 1.5, 1.75].map((v) => h("option", { value: String(v), selected: v === (s.tts_speed ?? 1) }, `${v}×`)));
+  void state.client.call("tts.status", {}).then((st) => {
+    output.replaceChildren(...languageOptions(st.languages, outputLanguage, "Auto · follow the reply"));
+    const languages = outputLanguage === "auto" ? st.languages : [outputLanguage];
+    voice.append(...languages.map((language) => h("optgroup", { label: voiceLanguageName(language) },
+      ...st.voices.filter((v) => v.language === language).map((v) => h("option", { value: v.id, selected: v.id === s.tts_voice }, v.name)))));
+  }).catch(() => {});
+
   return [
-    row("Read replies aloud", status, action),
-    row("Reading voice", "Which voice reads replies. More voices can be added later.", voiceSel),
-    row("Reading speed", "How fast a reply is read (the pitch stays natural).", speedSel),
+    modelControl("voice", "Whisper Large-v3 Turbo Q5"),
+    row("Microphone language", "Used for dictation, voice notes, and Voice Mode. Auto detects the spoken language.", input),
+    modelControl("tts", "Kitten TTS 2 Mini"),
+    row("Spoken reply language", "Voice Mode answers in this language. Auto follows what you speak.", output),
+    row("Speaking voice", "Default voice for each language. The Agent voice picker can set a separate voice for Voice Mode.", voice),
+    row("Read-aloud speed", "Playback speed for chat replies.", speed),
   ];
 }

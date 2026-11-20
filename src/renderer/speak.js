@@ -1,6 +1,6 @@
-// Read aloud (V3): the 🔊 button on a reply. Pocket TTS runs on this Mac (runtime/tts); the runtime sends one
+// Read aloud (V3): the 🔊 button on a reply. Kitten TTS 2 Mini runs on this Mac (runtime/tts); the runtime sends one
 // sentence of speech at a time as `tts.event` audio and this module plays them in order with <audio> elements,
-// so pause, stop and speed (pitch kept) are instant. The first time, a plain question asks before the 98 MB voice
+// so pause, stop and speed (pitch kept) are instant. The first time, a plain question asks before the voice model
 // is downloaded. One reply speaks at a time; leaving the chat stops it.
 
 import { h } from "./dom.js";
@@ -20,6 +20,7 @@ let url = null;
 let finished = false; // the runtime sent every sentence
 let watch = null;
 let installWait = null;
+let installPending = null;
 let anchor = null; // the message's DOM node, to stop when its chat is hidden
 
 const call = (m, p = {}) => state.client.call(m, p);
@@ -101,18 +102,31 @@ function waitInstall() {
   return new Promise((resolve) => { installWait = (ok, msg) => { if (!ok) toast(`Couldn't get the voice: ${msg ?? "download failed"}`, 8000); resolve(ok); }; });
 }
 
-export async function ensureVoice() {
+export function ensureVoice() {
+  if (!installPending) installPending = installVoice().finally(() => { installPending = null; });
+  return installPending;
+}
+
+async function installVoice() {
   const st = await call("tts.status");
+  if (st.available === false) throw new Error(st.error || "The local speech output engine is unavailable.");
   if (st.installed) return true;
-  if (st.installing) { S.phase = "installing"; notify(); return waitInstall(); }
+  if (st.installing) {
+    if (S.owner) { S.phase = "installing"; notify(); }
+    const done = waitInstall();
+    const latest = await call("tts.status");
+    if (latest.installed) { installWait = null; return true; }
+    if (!latest.installing) { installWait?.(false, latest.install_error); installWait = null; }
+    return done;
+  }
   const mb = Math.round(st.download_bytes / 1e6);
   const yes = await confirmDialog({
-    title: "Download the Pocket TTS voice?",
-    body: `Opscode reads replies aloud with Pocket TTS, a small voice that runs on this Mac, so nothing you listen to is sent anywhere. It downloads once from the sherpa-onnx project on GitHub (${mb} MB, about ${Math.round(st.disk_bytes / 1e6)} MB on disk) and is checked before use. Licence: Creative Commons Attribution 4.0, for personal, non-commercial use. You can remove it again in Settings.`,
+    title: "Download the Kitten TTS 2 Mini voice?",
+    body: `Opscode reads replies aloud with Kitten TTS 2 Mini, with 16 local speech languages. Your reply is synthesized on this computer. The one-time download is ${mb} MB and is verified before use. ${st.license} You can remove it again in Settings.`,
     confirm: `Download ${mb} MB`,
   });
   if (!yes) return false;
-  S.phase = "installing"; S.pct = 0; S.label = "Downloading"; notify();
+  if (S.owner) { S.phase = "installing"; S.pct = 0; S.label = "Downloading"; notify(); }
   const done = waitInstall();
   try {
     const r = await call("tts.install");
@@ -185,7 +199,7 @@ export function createSpeakControls(get) {
     if (msg) msg.dataset.speaking = mine ? "true" : "false";
     stop.hidden = speed.hidden = !mine;
     main.dataset.phase = mine ? S.phase : "idle";
-    let label = "Read aloud (Pocket TTS)";
+    let label = "Read aloud (Kitten TTS 2 Mini)";
     let glyph = icon("volume");
     if (mine && S.phase === "playing") { label = "Pause"; glyph = icon("pause"); }
     else if (mine && S.phase === "paused") { label = "Resume"; glyph = icon("play"); }

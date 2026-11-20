@@ -1,0 +1,4 @@
+analyzer:
+  errors:
+    # Freezed copies JsonKey metadata from constructor parameters to fields.
+    invalid_annotation_target: ignore

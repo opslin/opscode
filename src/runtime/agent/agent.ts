@@ -4,8 +4,9 @@
 import type { ChatMessage } from "../../shared/protocol";
 import type { Engine, EngineInput, TurnHost } from "../turns";
 import { streamLlm, type Block, type LlmConfig, type Msg } from "./llm";
-import { TOOLS, policy, type Tool } from "./tools";
-import { devicesNote, FILE_LINK_NOTE } from "../engines/claude";
+import { TOOLS, policy, type Tool, type ToolChoice } from "./tools";
+import { devicesNote, FILE_LINK_NOTE, STEP_NOTE, repoNote } from "../engines/claude";
+import { autoAsks, riskOf, toolRisk } from "../engines/safety";
 
 const MAX_STEPS = 25;
 const SUB_MAX_STEPS = 12;
@@ -21,8 +22,9 @@ const SUB_TOOLS: Record<"read" | "edit" | "full", string[]> = {
 const COMPUTER_GUIDE = [
   "",
   "You can use the user's computer through the computer_* tools. Rules:",
-  "- Take a screenshot first. Coordinates are pixels in the latest screenshot. Do one action at a time, then screenshot to check the result.",
-  "- Each action names the app in front and asks the user, unless they allowed that app. Terminals, password managers, system prompts and this app are off limits; if an action is refused, do not try to work around it — tell the user.",
+  "- If you have computer_see: use it, not screenshots. It lists an app's buttons, fields and text as [id] lines; act with computer_click / computer_type / computer_key / computer_menu / computer_open by id. Each action's result says whether the window changed and gives the new list: read it instead of looking again. Never say something worked unless a result showed it. Take computer_screenshot only to judge how something looks.",
+  "- Without computer_see: take a screenshot first; coordinates are pixels in the latest screenshot; one action at a time, then screenshot to check.",
+  "- Risky steps (buying, paying, sending, deleting, submitting) ask the user first; the rest runs. Terminals, password managers, system prompts and this app are off limits; if an action is refused, do not try to work around it — tell the user.",
   "- Never type passwords, codes or secrets, and do not read them out of the screen. Stop and ask if a step needs them.",
 ].join("\n");
 
@@ -99,7 +101,7 @@ export class AgentEngine implements Engine {
     const all: Tool[] = [...TOOLS, ...host.extraTools];
     let subRuns = 0;
     if (host.agents.length) all.push(this.subagentTool(cfg, host, () => subRuns++ < SUB_MAX_RUNS));
-    const system = SYSTEM(host.workspaceName, host.memory, host.skills, invoked, host.extraTools.some((t) => t.kind === "computer"), host.agents) + `\n\n${FILE_LINK_NOTE}` + (() => { const n = devicesNote(host.extraTools.map((t) => t.def.name)); return n ? `\n\n${n}` : ""; })();
+    const system = SYSTEM(host.workspaceName, host.memory, host.skills, invoked, host.extraTools.some((t) => t.kind === "computer"), host.agents) + `\n\n${FILE_LINK_NOTE}\n\n${STEP_NOTE}${repoNote(host.root) ? `\n\n${repoNote(host.root)}` : ""}` + (() => { const n = devicesNote(host.extraTools.map((t) => t.def.name)); return n ? `\n\n${n}` : ""; })();
     await this.loop({ cfg, system, messages, all, signal: input.signal, host, emit, maxSteps: MAX_STEPS, emptyIsError: true });
   }
 
@@ -196,12 +198,18 @@ export class AgentEngine implements Engine {
     const tool = all.find((t) => t.def.name === name);
     if (!tool) return { content: `Unknown tool "${name}".`, is_error: true };
     let rule = policy(host.mode(), tool.kind);
+    // Auto: the call itself decides — a risky command or a destructive tool asks, the rest goes ahead.
+    if (host.mode() === "auto" && rule !== "hide" && (tool.kind === "command" || tool.kind === "mcp")) {
+      const risk = tool.kind === "command" ? riskOf(String(input.command ?? ""), host.root) : toolRisk(name);
+      rule = autoAsks(risk, host.trusted?.() ?? false) ? "ask" : "auto";
+    }
     if (rule === "hide") {
       const msg = "This chat is read-only, so that action is not available.";
       return { content: msg, is_error: true };
     }
     let { summary, detail } = tool.describe(input);
     let approvedApp: string | undefined;
+    let choices: ToolChoice[] | undefined;
     if (tool.gate) {
       // The tool decides at run time (e.g. by the app in front). A gate can refuse but never loosen "hide".
       let g;
@@ -220,8 +228,9 @@ export class AgentEngine implements Engine {
       }
       rule = g.rule;
       approvedApp = g.app;
+      choices = g.choices;
     }
-    host.toolStart({ call_id: id, tool: name, summary, detail }, rule === "ask");
+    host.toolStart({ call_id: id, tool: name, summary, detail, ...(choices?.length ? { choices } : {}) }, rule === "ask");
     if (rule === "ask") {
       const allowed = await host.approve(id);
       if (!allowed) {
@@ -231,7 +240,8 @@ export class AgentEngine implements Engine {
       }
     }
     try {
-      const r = await tool.run(input, { root: host.root, signal, saveNote: host.saveNote, readSkill: host.readSkill, ...(approvedApp !== undefined ? { approvedApp } : {}) });
+      const askUser = host.askUser;
+      const r = await tool.run(input, { root: host.root, signal, saveNote: host.saveNote, readSkill: host.readSkill, ...(approvedApp !== undefined ? { approvedApp } : {}), ...(host.choiceOf?.(id) !== undefined ? { choice: host.choiceOf(id) } : {}), ...(askUser ? { ask: (qs) => askUser(id, qs) } : {}) });
       host.toolEnd(id, { output: r.output, is_error: r.is_error });
       return { content: r.output, is_error: r.is_error, ...(r.image ? { image: r.image } : {}) };
     } catch (e) {

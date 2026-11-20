@@ -2,6 +2,13 @@
 
 A desktop coding-agent app for macOS and Windows. One window where you talk or type to coding agents (Claude Code, Codex, Antigravity, Qoder, or any API model), keep several of them working at once, and talk to them by voice. Everything runs on your computer; nothing but the model traffic leaves it.
 
+## Voice
+
+In **Settings → General → Voice**, download **Whisper Large-v3 Turbo Q5** for dictation and **Kitten TTS 2 Mini** for spoken replies. Use **Microphone language** to pick Hindi, English, or automatic detection. **Spoken reply language** and **Speaking voice** control Voice Mode and read-aloud. Audio recognition and synthesis run locally after the downloads.
+
+Desktop packages bundle the inference runtime. To enable voice in an Apple Silicon development checkout, run `npm run voice:runtime` once before `npm start`. Preparing the runtime requires `uv` and network access.
+
+
 ## What it does
 
 - **Chat with any engine**: Claude Code, Codex, Antigravity, Qoder, or API keys (Anthropic and OpenAI-compatible), with accounts, limits and usage tracked per engine.

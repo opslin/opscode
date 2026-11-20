@@ -21,6 +21,10 @@ const b64 = (s) => Buffer.from(s, "latin1").toString("base64");
   t.check("a sentence is released as soon as the next one's first letter arrives (not before: a boundary is only known then)", JSON.stringify(a) === JSON.stringify([["On it."], [], [], ["I'll have it look at the settings page first."], ["Then I'll tell you."]]), JSON.stringify(a));
   const b = feed(["Version 3.5 is out. Dr. Smith agrees. e.g. now."]);
   t.check("numbers and abbreviations do not end a sentence", JSON.stringify(b.flat()) === JSON.stringify(["Version 3.5 is out.", "Dr. Smith agrees. e.g. now."]) || b.flat().length === 2, JSON.stringify(b));
+  const hindi = feed(["नमस्ते। मैं ", "मदद के लिए तैयार हूँ। बताइए।"]);
+  t.check("Hindi sentence boundaries release speech while the reply is streaming", hindi[0][0] === "नमस्ते।" && hindi.flat().length === 3, JSON.stringify(hindi));
+  const japanese = feed(["こんにちは。今日はどうですか？"]);
+  t.check("Japanese sentence boundaries work without spaces", japanese[0][0] === "こんにちは。" && japanese.flat().length === 2, JSON.stringify(japanese));
   const c = feed(["**Done.** See `src/app.ts` and https://example.com now"]);
   t.check("markup is cleaned for speech (bold, file paths, links)", c.flat().join(" ").includes("Done.") && c.flat().join(" ").includes("app.ts") && !c.flat().join(" ").includes("**") && c.flat().join(" ").includes("link"), JSON.stringify(c));
   const long = "word ".repeat(80).trim();
@@ -103,6 +107,9 @@ const server = createServer((req, res) => {
       if (lastText.includes("<heard>tell me a long story")) { slowBrain = true; return reply(text("Once upon a time there was a SLOW dragon. It lived in a cave by the sea. Every morning it counted its gold twice. Then it went back to sleep.")); }
       if (lastText.includes("<heard>stop talking")) return reply(text("Sure."));
       if (lastText.includes("<heard>what is the plan")) return reply(text("The plan is to add the switch and then run the tests carefully."));
+      if (lastText.includes("<heard>नमस्ते, आप कैसे हैं?</heard>") && lastText.includes("Reply in Hindi, using its native script.") && !b.system.includes("English only")) {
+        return reply(text("नमस्ते। मैं आपकी मदद के लिए तैयार हूँ।"));
+      }
       if (lastText.includes("<heard>")) return reply(text("Got it."));
       return reply(text("Okay."));
     }
@@ -173,10 +180,10 @@ try {
   t.check("speech is shown as it comes (hearing, partial words, then what was heard)", !!(await waitFor(() => ev("heard", S)[0])) && ev("state", S).some((e) => e.state === "hearing") && ev("partial", S).length >= 4 && ev("heard", S)[0].text === "please add dark mode to the settings");
   t.check("it thinks, then the worker chat appears (bind) with the brief's title", !!(await waitFor(() => ev("bind", S)[0])), JSON.stringify(ev("bind", S)));
   const wchat = ev("bind", S)[0].chat_id;
-  t.check("front agent request: its prompt (briefing rules), its six tools, the worker line and what was heard", (() => {
+  t.check("front agent request: its prompt (briefing rules), its fourteen tools, the worker line and what was heard", (() => {
     const r = brainReqs[0]; if (!r) return false;
-    const names = (r.body.tools ?? []).map((x) => x.name).sort().join(",");
-    return r.body.system.includes("HOW TO WRITE A BRIEF") && r.body.system.includes("Shopkart") && names === "peek,work_approve,work_start,work_status,work_stop,work_tell" && r.lastText.includes("<workers>none yet") && r.lastText.includes("<heard>please add dark mode to the settings</heard>");
+    const names = (r.body.tools ?? []).map((x) => x.name).filter((n) => !n.startsWith("computer_")).sort().join(",");
+    return r.body.system.includes("HOW TO WRITE A BRIEF") && r.body.system.includes("Shopkart") && names === "folder_find,folder_look,models_list,peek,project_add,project_find,projects_list,work_approve,work_start,work_status,work_stop,work_tell,work_trust,workers_show" && r.lastText.includes("<workers>none yet") && r.lastText.includes("<heard>please add dark mode to the settings</heard>");
   })(), JSON.stringify(brainReqs[0]?.lastText));
   t.check("the worker received the brief, word for word", !!(await waitFor(() => workerReqs[0])) && flat(workerReqs[0].body.messages[0].content).includes("Goal: Add a dark mode switch to the settings page") && flat(workerReqs[0].body.messages[0].content).includes("Do not touch the login page"), JSON.stringify(workerReqs[0]?.lastText?.slice(0, 120)));
   const chats = (await ok("chat.list", {})).chats;
@@ -212,7 +219,7 @@ try {
   // ---- a follow-up that needs approval, answered by voice ---------------------------------------------------------------
   await ok("voiceagent.audio", { session: S, pcm: b64("SAY:please run the tests") });
   const ask = await waitFor(() => brainReqs.find((r) => r.lastText.includes("status=\"waiting_for_approval\"")));
-  t.check("the worker's approval request reaches the agent with what it wants to do and the call id", !!ask && /run_command|echo tests-ok/.test(ask.lastText) && /call_id [\w-]+/.test(ask.lastText) && ask.lastText.includes("Do not approve until they say so"), ask?.lastText?.slice(0, 300));
+  t.check("the worker's approval request reaches the agent with what it wants to do and the call id", !!ask && /run_command|echo tests-ok/.test(ask.lastText) && /call_id [\w-]+/.test(ask.lastText) && ask.lastText.includes("Ask the person yes or no in one short sentence"), ask?.lastText?.slice(0, 300));
   t.check("the agent asks the person aloud", !!(await waitFor(() => spoken().some((x) => x.includes("Shall I allow it")))));
   const waitingCard = (await ok("turn.history", { chat_id: wchat })).messages.at(-1).parts?.find((p) => p.status === "awaiting_approval");
   const wInfo = ev("worker", S).filter((e) => e.id === "w1").at(-1);
@@ -316,6 +323,16 @@ try {
   await ok("voiceagent.audio", { session: again2.session, pcm: b64("SAY:what is it doing") });
   const cont = await waitFor(() => brainReqs.find((r, i) => i >= nCont && r.lastText.includes("<heard>what is it doing</heard>")));
   t.check("…the agent knows the worker already exists and how it ended (state taken from the chat's record)", !!cont && !cont.lastText.includes("not started") && /<workers>w1 "Dark mode": finished/.test(cont.lastText), cont?.lastText?.slice(0, 200));
+  const hindiMic = Buffer.from("SAY[hi]:नमस्ते, आप कैसे हैं?", "utf8").toString("base64");
+  await ok("voiceagent.audio", { session: again2.session, pcm: hindiMic });
+  t.check("Auto passes Whisper's Hindi detection to the conversation model and speaks its Hindi reply",
+    !!(await waitFor(() => spoken().some((sentence) => sentence.includes("मैं आपकी मदद के लिए तैयार हूँ")))));
+  await ok("settings.set", { patch: { tts_locale: "en" } });
+  const nFixed = brainReqs.length;
+  await ok("voiceagent.audio", { session: again2.session, pcm: hindiMic });
+  t.check("an explicit spoken reply language takes priority over microphone detection",
+    !!(await waitFor(() => brainReqs.slice(nFixed).find((r) => r.lastText.includes("Reply in English, using its native script.")))));
+  await ok("settings.set", { patch: { tts_locale: "auto" } });
   await ok("voiceagent.stop", { session: again2.session });
 
   // ---- the voice agent can run on Codex and Antigravity too (only talks + its own tools; nothing else is allowed) ----------------

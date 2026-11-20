@@ -3,6 +3,7 @@
 
 import { join } from "node:path";
 import { DEFAULT_SETTINGS, PERMISSION_MODES, type PermissionMode, type Settings } from "../shared/protocol";
+import { KITTEN_LANGUAGES } from "./tts/kitten";
 import { ensurePrivateDir, readJson, writeJsonAtomic } from "./jsonFile";
 import { err, isRecord, ok, type Result } from "./rpc";
 
@@ -44,6 +45,10 @@ export function validateSettingsPatch(input: unknown): Result<Partial<Settings>>
         if (typeof value !== "string" || !/^(auto|[a-z]{2,3}(-[A-Za-z0-9]{2,8})*)$/.test(value)) return err('voice_locale must be "auto" or a language like en-IN');
         out.voice_locale = value;
         break;
+      case "tts_locale":
+        if (typeof value !== "string" || (value !== "auto" && !KITTEN_LANGUAGES.includes(value))) return err("Choose a supported speech output language");
+        out.tts_locale = value;
+        break;
       case "tts_voice":
         if (typeof value !== "string" || !/^[a-z0-9_-]{1,40}$/i.test(value)) return err("tts_voice must be a voice name");
         out.tts_voice = value;
@@ -78,7 +83,7 @@ export function validateSettingsPatch(input: unknown): Result<Partial<Settings>>
         out.voice_end_ms = value;
         break;
       case "default_mode":
-        if (!(PERMISSION_MODES as readonly unknown[]).includes(value)) return err("default_mode must be read, supervised, auto_edits or full");
+        if (!(PERMISSION_MODES as readonly unknown[]).includes(value)) return err("default_mode must be read, supervised, auto_edits, auto or full");
         out.default_mode = value as PermissionMode;
         break;
       default:

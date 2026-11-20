@@ -3,7 +3,7 @@
 // A reply that was streaming when the runtime stopped loads as "interrupted".
 
 import { randomUUID } from "node:crypto";
-import { rmSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { LIMITS, PERMISSION_MODES, isAgentEngine, type AgentEngineId, type ChatMessage, type ChatMeta, type PermissionMode } from "../shared/protocol";
 import { ensurePrivateDir, readJson, writeJsonAtomic } from "./jsonFile";
@@ -11,6 +11,9 @@ import { isRecord } from "./rpc";
 
 const MAX_CHATS = 500;
 const TITLE_MAX = 80;
+
+/** How soon a failed chat save is tried again. */
+const CHAT_SAVE_RETRY_MS = Number(process.env.OPSCODE_CHAT_SAVE_RETRY_MS) || 10_000;
 
 export class ChatStore {
   private readonly metaFile: string;
@@ -57,10 +60,10 @@ export class ChatStore {
     return this.list(workspaceId)[0];
   }
 
-  create(workspaceId: string, mode: PermissionMode): ChatMeta {
+  create(workspaceId: string, mode: PermissionMode, initial: Partial<Pick<ChatMeta, "engine" | "model" | "effort" | "accounts" | "creation_request_id" | "creation_request_hash">> = {}): ChatMeta {
     if (this.chats.length >= MAX_CHATS) throw new Error(`at most ${MAX_CHATS} chats; delete some first`);
     const now = new Date().toISOString();
-    const chat: ChatMeta = { id: randomUUID(), workspace_id: workspaceId, title: "", mode, created_at: now, updated_at: now };
+    const chat: ChatMeta = { id: randomUUID(), workspace_id: workspaceId, title: "", mode, created_at: now, updated_at: now, ...initial };
     this.chats.push(chat);
     this.saveMeta();
     return { ...chat };
@@ -255,15 +258,30 @@ export class ChatStore {
     setTimeout(() => this.flush(), 150).unref();
   }
 
+  /** Set when a save failed (a full disk): the chats stay in memory and saving is tried again. */
+  saveError: string | null = null;
+
   flush(): void {
     this.flushing = false;
-    for (const id of this.dirty) {
+    for (const id of [...this.dirty]) {
       const m = this.messages.get(id);
       if (m && this.get(id)) {
         const trimmed = m.length > LIMITS.TURN_HISTORY_MAX_MESSAGES ? m.slice(-LIMITS.TURN_HISTORY_MAX_MESSAGES) : m;
-        writeJsonAtomic(join(this.dir, `${id}.json`), trimmed);
+        try {
+          // Test hook: while this file exists, saving fails as on a full disk.
+          if (process.env.OPSCODE_FAKE_DISK_FULL && existsSync(process.env.OPSCODE_FAKE_DISK_FULL)) throw new Error("ENOSPC: no space left on device, write (test)");
+          writeJsonAtomic(join(this.dir, `${id}.json`), trimmed);
+        } catch (e) {
+          // A full disk (ENOSPC) used to throw inside the timer and kill the runtime. Keep it in memory and try again.
+          const first = this.saveError === null;
+          this.saveError = e instanceof Error ? e.message : String(e);
+          if (first) console.error(`chat save failed, will retry: ${this.saveError}`);
+          if (!this.flushing) { this.flushing = true; setTimeout(() => this.flush(), CHAT_SAVE_RETRY_MS).unref(); }
+          return;
+        }
       }
+      this.dirty.delete(id);
     }
-    this.dirty.clear();
+    if (this.saveError !== null) { console.error("chat save works again"); this.saveError = null; }
   }
 }

@@ -183,6 +183,14 @@ async function run(p) {
   if (text.includes("hang")) { delta("Thinking"); return; }
   // FAKE_CMD=«command»: ask to run exactly this command (like Codex's commandExecution approval) and log the decision.
   const cmdM = /FAKE_CMD=«([^»]*)»/.exec(text);
+  // FAKE_CODEX_ASK: Codex's own question tool (request_user_input, a server request), then go on with the answer.
+  if (text.includes("FAKE_CODEX_ASK")) {
+    const r = await ask("item/tool/requestUserInput", { threadId: thread, turnId: "turn-1", itemId: "ask-cx", isBlocking: true, questions: [{ id: "color", header: "Color", question: "Which color for the button?", isOther: true, options: [{ label: "Blue (Recommended)", description: "Matches the brand" }, { label: "Green", description: "Like the old one" }] }] });
+    if (log) appendFileSync(log, JSON.stringify({ bin: "codex", user_input: r }) + "\n");
+    delta(`Using ${r?.answers?.color?.answers?.join(", ") || "my own pick"}.`);
+    note("turn/completed", { threadId: thread, turn: { id: "turn-1", status: "completed" } });
+    return;
+  }
   // FAKE_CODEX_LIMIT: Codex runs out of its plan limit mid-turn (error, no retry).
   if (text.includes("FAKE_CODEX_LIMIT")) { note("error", { threadId: thread, turnId: "turn-1", willRetry: false, error: { message: "You've hit your usage limit. Upgrade to Pro or try again at 5:00 PM." } }); return; }
   // FAKE_CODEX_PLAN: Codex's own plan (turn/plan/updated), like its update_plan tool.

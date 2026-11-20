@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "repositories": {
+    "backend": {
+      "url": "https://github.com/Bakaloo-Enterprise/bakaloo-backend",
+      "commit": "02a45748fc21626df07f5eb898849578ba707a7b",
+      "stack": "Node.js 18+ from package engines, Fastify 4, PostgreSQL, Redis, Vitest"
+    },
+    "dashboard": {
+      "url": "https://github.com/Bakaloo-Enterprise/bakaloo-dashboard",
+      "commit": "3b92d9740ebfc267acb4525bc29838644504660c",
+      "stack": "Next.js 14.2.35 App Router, React 18, TypeScript, TanStack Query, Zustand, Vitest, Playwright"
+    },
+    "flutter-app": {
+      "url": "https://github.com/Bakaloo-Enterprise/bakaloo-flutter-app",
+      "commit": "67021d4354a7c0da7e26cb0b152e06f16c888909",
+      "stack": "Flutter and Dart pinned by .fvmrc and pubspec.lock, Riverpod, Dio, GoRouter, Hive, Flutter test"
+    }
+  }
+}

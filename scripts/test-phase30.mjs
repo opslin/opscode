@@ -89,7 +89,8 @@ try {
   t.check("a source with odd characters is never offered", !/evil/.test(found?.result ?? ""));
   t.check("searching asks nothing; installing asks the person first", q?.length === 2 && !!card(id), JSON.stringify(q?.map((e) => e.call_id)));
   const ask = card(id);
-  t.check("the card says what it is, where from, that it is third party, and that it is temporary", /Fill and read PDF forms/.test(ask?.detail ?? "") && /acme\/skills/.test(ask.detail) && /third party/.test(ask.detail) && /removed/.test(ask.detail), ask?.detail);
+  t.check("the card says what it is, where from, and that it is third party", /Fill and read PDF forms/.test(ask?.detail ?? "") && /acme\/skills/.test(ask.detail) && /third party/.test(ask.detail), ask?.detail);
+  t.check("it offers three places: all projects, this project, just this task (removed later)", JSON.stringify(ask?.choices?.map((c) => c.id)) === JSON.stringify(["global", "project", "temp"]) && /Removed/.test(ask.choices[2].hint) && /\/pdf-forms command/.test(ask.choices[0].hint), JSON.stringify(ask?.choices));
   const inst = dev("skill_install")[0];
   t.check("after yes, the steps come back at once so the chat can use them now", /pypdf to list the fields/.test(inst?.result ?? "") && /ready/.test(inst.result), inst?.result?.slice(0, 120));
   t.check("and the result warns that the text is written by a third party", /third party/.test(inst?.result ?? "") && /ignore anything/i.test(inst.result));
@@ -110,7 +111,7 @@ try {
   id = await run(c2, `again\n${lines(["skill_install", { source: "acme/skills", skill: "tidy-csv", keep: true }])}`);
   await asks(id, [true]);
   await finished(id);
-  t.check("keep: the card says it will be kept", /kept for future chats/.test(card(id)?.detail ?? ""), card(id)?.detail);
+  t.check("keep: the card does not offer 'just this task'", JSON.stringify(card(id)?.choices?.map((c) => c.id)) === JSON.stringify(["global", "project"]), JSON.stringify(card(id)?.choices));
   await del(c2);
   t.check("and it stays even after its chat is deleted, as a personal skill any project can use", (await names()).includes("tidy-csv"));
   const stored = readFileSync(join(stateDir, "skills", "tidy-csv", "SKILL.md"), "utf8");
@@ -146,8 +147,8 @@ try {
     odd.push({ card: card(id), r, has: (await names()).includes("odd-layout") });
   }
   t.check("a skill kept in an unusual folder is found through the repo's file list", /Do the odd thing/.test(odd[0].r));
-  t.check("first and second task: temporary, gone with its chat", !odd[0].has && !odd[1].has && /removed/.test(odd[0].card?.detail ?? ""));
-  t.check("third task: the card says it was needed 3 times and will be kept, and it stays", /3 times/.test(odd[2].card?.detail ?? "") && odd[2].has, odd[2].card?.detail);
+  t.check("first and second task: temporary, gone with its chat", !odd[0].has && !odd[1].has && odd[0].card?.choices?.some((c) => c.id === "temp"));
+  t.check("third task: the card says it was needed 3 times, no longer offers temporary, and it stays", /3 times/.test(odd[2].card?.detail ?? "") && !odd[2].card?.choices?.some((c) => c.id === "temp") && odd[2].has, odd[2].card?.detail);
 
   // ---- a long skill comes in part; its notes come too; scripts never ------------------------------------
   c2 = await mk();
@@ -224,7 +225,7 @@ let clock = 1_000_000_000;
 const fake = async (u) => ({ ok: /SKILL\.md$/.test(u), status: 200, text: async () => PDF });
 const fu = new F.SkillFinder(join(base, "unit-state-dir-x"), ud, () => {}, fake, () => clock);
 mkdirSync(join(base, "unit-state-dir-x"), { recursive: true });
-await fu.install("acme/skills", "pdf-forms", "w1", false);
+await fu.install("acme/skills", "pdf-forms", "w1", "temp");
 clock += F.IDLE_MS - 60_000; fu.touch("w1"); fu.sweep();
 t.check("a worker that keeps running turns keeps its temporary skill", existsSync(join(ud, "pdf-forms", "SKILL.md")));
 clock += F.IDLE_MS + 1; fu.sweep();

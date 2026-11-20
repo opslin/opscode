@@ -7,7 +7,7 @@
 // Markdown is Opscode's own renderer (safe DOM built from text nodes), mounted as nodes.
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { GitBranchIcon, FileTextIcon, GlobeIcon, SearchIcon, ShieldAlertIcon, SquareTerminalIcon, UsersIcon, WrenchIcon } from "lucide-react";
+import { BookOpenIcon, GitBranchIcon, FileTextIcon, GlobeIcon, SearchIcon, ShieldAlertIcon, SquareTerminalIcon, UsersIcon, WrenchIcon } from "lucide-react";
 import { RunActivity, type RunActivityEntry } from "@/components/assistant-ui/elements/run-activity";
 import { TerminalBlock } from "@/components/assistant-ui/elements/terminal-block";
 import { CodeDiff, type DiffLine } from "@/components/assistant-ui/elements/code-diff";
@@ -21,10 +21,13 @@ import { ErrorState } from "@/components/assistant-ui/elements/error-state";
 
 export type MsgPart =
   | { kind: "text"; text: string }
-  | { kind: "tool"; call_id: string; tool: string; summary: string; detail?: string; status: "awaiting_approval" | "running" | "done" | "error" | "denied"; output?: string; branch?: { names: string[]; current: string } };
+  | { kind: "tool"; call_id: string; tool: string; summary: string; detail?: string; status: "awaiting_approval" | "awaiting_answer" | "running" | "done" | "error" | "denied"; output?: string; branch?: { names: string[]; current: string }; choices?: { id: string; label: string; hint?: string }[]; questions?: AskQ[]; answers?: { id: string; picks: string[]; other?: string }[]; skipped?: boolean };
+interface AskQ { id: string; header?: string; question: string; options: { label: string; description?: string }[]; multi?: boolean }
 export interface MsgSnap { turnId: string; parts: MsgPart[]; status: "streaming" | "complete" | "interrupted" | "failed"; error?: string; startedAt?: number; endedAt?: number }
 export interface MsgHandlers {
-  approve(callId: string, allow: boolean, remember?: "allow" | "current"): void;
+  approve(callId: string, allow: boolean, remember?: "allow" | "current", choice?: string): void;
+  /** Opens the question card of this call again (it sits on top of the message box). */
+  openQuestion?(callId: string): void;
   continue?(): void;
   retry?(): void;
   /** Opscode's markdown renderer: text -> a DOM node. */
@@ -64,6 +67,33 @@ function diffOf(tool: string, detail: string | undefined): { lines: DiffLine[]; 
   }
   if (!lines.length) return null;
   return { lines: lines.slice(0, 80), add: lines.filter((l) => l.kind === "added").length, del: lines.filter((l) => l.kind === "removed").length };
+}
+
+/** What a question card left in the chat: waiting (with Open), what you chose, or skipped. */
+function AskLine({ p, open }: { p: Extract<MsgPart, { kind: "tool" }>; open?: () => void }) {
+  const qs = p.questions ?? [];
+  const clean = (l: string) => l.replace(/\s*\((recommended|suggested)\)\s*$/i, "");
+  if (p.status === "awaiting_answer") {
+    return (
+      <div className="ask-line" data-state="waiting" data-call={p.call_id}>
+        <span className="ask-dot" />
+        <span className="ask-line-text">Waiting for your answer: {qs[0]?.question}{qs.length > 1 ? ` (+${qs.length - 1} more)` : ""}</span>
+        {open ? <button type="button" className="ask-line-btn" onClick={open}>Open</button> : null}
+      </div>
+    );
+  }
+  if (p.skipped || !p.answers?.length) {
+    return <div className="ask-line" data-state="skipped" data-call={p.call_id}><span className="ask-line-text">Question skipped: the agent decides. {qs[0]?.question}</span></div>;
+  }
+  return (
+    <div className="ask-line" data-state="answered" data-call={p.call_id}>
+      {qs.map((q) => {
+        const a = p.answers!.find((x) => x.id === q.id);
+        const said = a ? [...a.picks.map(clean), ...(a.other?.trim() ? [`"${a.other.trim()}"`] : [])].join(", ") : "(no answer)";
+        return <div key={q.id} className="ask-line-row"><span className="ask-line-q">{q.header ?? q.question}</span><span className="ask-line-a">You chose: {said}</span></div>;
+      })}
+    </div>
+  );
 }
 
 function Tool({ p }: { p: Extract<MsgPart, { kind: "tool" }> }) {
@@ -123,9 +153,10 @@ export function Message({ m, on }: { m: MsgSnap; on: MsgHandlers }) {
   // The answer is the text after the last tool; text before it is commentary inside the work.
   const answer = m.parts.slice(lastTool + 1).filter((p): p is { kind: "text"; text: string } => p.kind === "text").map((p) => p.text).join("");
   const asking = tools.filter((p) => p.status === "awaiting_approval");
+  const questions = tools.filter((p) => !!p.questions?.length);
   const entries: RunActivityEntry[] = m.parts.slice(0, lastTool + 1).flatMap((p, i): RunActivityEntry[] => {
     if (p.kind === "text") return p.text.trim() ? [{ id: `t${i}`, kind: "commentary", label: p.text.trim().split("\n")[0]!.slice(0, 120), content: <Markdown text={p.text} md={on.markdown} /> }] : [];
-    if (p.status === "awaiting_approval") return [];
+    if (p.status === "awaiting_approval" || p.questions?.length) return [];
     const Icon = ICON[p.tool] ?? WrenchIcon;
     return [{ id: p.call_id, kind: "tool", label: p.summary, content: <div className="flex flex-col gap-2"><span className="sr-only"><Icon /></span><Tool p={p} /></div> }];
   });
@@ -146,7 +177,24 @@ export function Message({ m, on }: { m: MsgSnap; on: MsgHandlers }) {
           onOpenChange={setOpen}
         />
       ) : null}
-      {asking.map((p) => p.branch ? (
+      {questions.map((p) => <AskLine key={p.call_id} p={p} {...(on.openQuestion ? { open: () => on.openQuestion!(p.call_id) } : {})} />)}
+      {asking.map((p) => p.choices?.length ? (
+        // More than one way to say yes (where a skill is installed): one button per choice, what each means in the details.
+        <ApprovalCard key={p.call_id} className="max-w-none" data-call={p.call_id} data-choices="true" state="request"
+          icon={<BookOpenIcon className="size-4" />} title="Install this skill?" subtitle={p.summary}
+          description={p.detail?.slice(0, 600)}
+          details={p.choices.map((c) => ({ label: c.label, value: c.hint ?? "" }))}
+          allowOnceLabel={p.choices[0]!.label} denyLabel="Don't install"
+          onAllowOnce={() => on.approve(p.call_id, true, undefined, p.choices![0]!.id)}
+          {...(p.choices[1] ? { alwaysAllowLabel: p.choices[1].label, onAlwaysAllow: () => on.approve(p.call_id, true, undefined, p.choices![1]!.id) } : {})}
+          onDeny={() => on.approve(p.call_id, false)}>
+          {p.choices[2] ? (
+            <button type="button" data-choice={p.choices[2].id} className="self-start text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground" onClick={() => on.approve(p.call_id, true, undefined, p.choices![2]!.id)}>
+              {p.choices[2].label}
+            </button>
+          ) : null}
+        </ApprovalCard>
+      ) : p.branch ? (
         // A new git branch: its own card. Create it, or keep working on the current branch; either answer can be remembered for the project.
         <ApprovalCard key={p.call_id} className="max-w-none" data-call={p.call_id} data-branch="true" state="request"
           icon={<GitBranchIcon className="size-4" />} title="Create a new branch?"
@@ -168,7 +216,7 @@ export function Message({ m, on }: { m: MsgSnap; on: MsgHandlers }) {
       {m.status === "interrupted" ? (
         <StoppedRun words={words.length ? words : ["(nothing", "written", "yet)"]} reason="You stopped it." {...(on.continue ? { onContinue: on.continue } : {})} />
       ) : answer ? <Markdown text={answer} md={on.markdown} /> : null}
-      {streaming && !answer && !asking.length && (!running || entries.length === 0) ? <ThinkingIndicator label={tools.length ? "Thinking about what it found" : "Thinking"} elapsed={took ?? "0s"} /> : null}
+      {streaming && !answer && !asking.length && !questions.some((p) => p.status === "awaiting_answer") && (!running || entries.length === 0) ? <ThinkingIndicator label={tools.length ? "Thinking about what it found" : "Thinking"} elapsed={took ?? "0s"} /> : null}
       {tree ? <FileTree nodes={tree.nodes} visibleCount={tree.nodes.length} totalAdditions={tree.add} totalDeletions={tree.del} /> : null}
       {m.status === "failed" ? <ErrorState title="The reply failed" detail={m.error ?? "Something went wrong."} retrying={false} onRetry={on.retry ?? (() => {})} /> : null}
     </div>

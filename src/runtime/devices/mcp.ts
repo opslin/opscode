@@ -23,10 +23,14 @@ export interface GrantHost {
   mode(): PermissionMode;
   /** The engine's own card for this call (running, same tool), so approval shows on it; undefined if none. */
   claimCall(toolName: string): string | undefined;
-  toolStart(call: { call_id: string; tool: string; summary: string; detail?: string }, needsApproval: boolean): void;
+  toolStart(call: { call_id: string; tool: string; summary: string; detail?: string; choices?: import("../../shared/protocol").ApprovalChoice[] }, needsApproval: boolean): void;
   toolEnd(callId: string, r: { output: string; is_error: boolean; denied?: boolean }): void;
   approve(callId: string): Promise<boolean>;
-  askApproval(callId: string, card?: { summary: string; detail?: string }): Promise<boolean>;
+  askApproval(callId: string, card?: { summary: string; detail?: string; choices?: import("../../shared/protocol").ApprovalChoice[] }): Promise<boolean>;
+  /** Which of the card's choices the person picked. */
+  choiceOf?(callId: string): string | undefined;
+  /** Turns the call's card into a question card and waits for the answer (ask_user). */
+  askUser?(callId: string, questions: import("../../shared/protocol").AskQuestion[]): Promise<import("../ask").AskResult>;
 }
 
 interface Grant {
@@ -126,6 +130,7 @@ async function callTool(grant: Grant, grants: DeviceGrants, name: string, input:
   let rule = policy(host.mode(), tool.kind);
   if (rule === "hide") return textResult("This chat is read-only, so that action is not available.", true);
   let { summary, detail } = tool.describe(input);
+  let choices: import("../agent/tools").ToolChoice[] | undefined;
   if (tool.gate) {
     let g;
     try { g = await tool.gate(input); } catch (e) { g = { rule: "deny" as const, summary, reason: e instanceof Error ? e.message : String(e) }; }
@@ -133,20 +138,22 @@ async function callTool(grant: Grant, grants: DeviceGrants, name: string, input:
     detail = g.detail ?? detail;
     if (g.rule === "deny") return textResult(g.reason ?? "Not allowed.", true);
     rule = g.rule;
+    choices = g.choices;
   }
   // Reuse the engine's card for this call when there is one; otherwise show our own.
   const engineCard = host.claimCall(name);
   const callId = engineCard ?? grants.nextId();
-  if (!engineCard) host.toolStart({ call_id: callId, tool: name, summary, ...(detail ? { detail } : {}) }, rule === "ask");
+  if (!engineCard) host.toolStart({ call_id: callId, tool: name, summary, ...(detail ? { detail } : {}), ...(choices?.length ? { choices } : {}) }, rule === "ask");
   if (rule === "ask") {
-    const allowed = engineCard ? await host.askApproval(callId, { summary, ...(detail ? { detail } : {}) }) : await host.approve(callId);
+    const allowed = engineCard ? await host.askApproval(callId, { summary, ...(detail ? { detail } : {}), ...(choices?.length ? { choices } : {}) }) : await host.approve(callId);
     if (!allowed) {
       if (!engineCard) host.toolEnd(callId, { output: "The user denied this action.", is_error: true, denied: true });
       return textResult("The user denied this action.", true);
     }
   }
   try {
-    const r = await tool.run(input, { root: host.root, signal: grant.abort.signal, saveNote: () => { throw new Error("not available"); }, readSkill: () => undefined });
+    const askUser = host.askUser;
+    const r = await tool.run(input, { root: host.root, signal: grant.abort.signal, saveNote: () => { throw new Error("not available"); }, readSkill: () => undefined, ...(host.choiceOf?.(callId) !== undefined ? { choice: host.choiceOf(callId) } : {}), ...(askUser ? { ask: (qs) => askUser(callId, qs) } : {}) });
     if (!engineCard) host.toolEnd(callId, { output: r.output, is_error: r.is_error });
     const content: Json[] = [{ type: "text", text: r.output }];
     if (r.image) content.push({ type: "image", data: r.image.data, mimeType: r.image.media_type });

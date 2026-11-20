@@ -19,6 +19,10 @@ export interface ToolCtx {
   readSkill(name: string): string | undefined;
   /** For computer tools: the app that was in front when the user approved the action. */
   approvedApp?: string;
+  /** The id of the choice the person picked on the approval card (tools whose gate gave choices). */
+  choice?: string;
+  /** Shows a question card and waits for the person's answer (ask_user). Missing where nobody can answer. */
+  ask?(questions: import("../../shared/protocol").AskQuestion[]): Promise<import("../ask").AskResult>;
 }
 export interface ToolResult {
   output: string;
@@ -37,6 +41,16 @@ export interface GateResult {
   reason?: string;
   /** Identity of the target the user is approving; passed back to run() as ctx.approvedApp. */
   app?: string;
+  /** Instead of Allow, the card shows one button per choice (2 or 3) plus Deny; the one picked comes back to run() as ctx.choice. */
+  choices?: ToolChoice[];
+}
+
+/** One way to say yes: "All projects", "This project"... */
+export interface ToolChoice {
+  id: string;
+  label: string;
+  /** One short line under the card saying what this choice means. */
+  hint?: string;
 }
 
 /** What a permission mode does with a kind of tool. "hide" tools are not offered to the model. */
@@ -56,6 +70,9 @@ export function policy(mode: PermissionMode, kind: ToolKind): "auto" | "ask" | "
     case "supervised":
       return "ask";
     case "auto_edits":
+      return kind === "edit" ? "auto" : "ask";
+    case "auto":
+      // Edits go ahead; commands and MCP tools are decided per call by their risk (agent.ts runTool, engines/safety.ts).
       return kind === "edit" ? "auto" : "ask";
     case "full":
       return "auto";

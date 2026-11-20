@@ -1,0 +1,118 @@
+{
+  "brand": "Bakaloo",
+  "address": "Home · 12 Lake View Road",
+  "deliveryMinutes": 25,
+  "categories": [
+    {
+      "id": "all",
+      "name": "All",
+      "icon": "basket"
+    },
+    {
+      "id": "produce",
+      "name": "Produce",
+      "icon": "leaf"
+    },
+    {
+      "id": "dairy",
+      "name": "Dairy & Eggs",
+      "icon": "milk"
+    },
+    {
+      "id": "pantry",
+      "name": "Pantry",
+      "icon": "grain"
+    },
+    {
+      "id": "snacks",
+      "name": "Snacks",
+      "icon": "snack"
+    }
+  ],
+  "promos": [
+    {
+      "label": "Tomato offer",
+      "image": "assets/images/tomato-offer.png",
+      "category": "produce"
+    },
+    {
+      "label": "Everyday essentials",
+      "image": "assets/images/everyday_essentials.png",
+      "category": "pantry"
+    }
+  ],
+  "products": [
+    {
+      "id": "chilled-combo",
+      "name": "Chilled Drinks & Dessert",
+      "category": "snacks",
+      "unit": "1 combo",
+      "price": 69,
+      "salePrice": 49,
+      "stockQuantity": 12,
+      "image": "assets/images/1ST_MINIBOX.png",
+      "rating": 4.6,
+      "ratingCount": 83,
+      "deliveryMinutes": 25
+    },
+    {
+      "id": "ice-cream",
+      "name": "Vanilla Ice Cream",
+      "category": "dairy",
+      "unit": "500 ml",
+      "price": 169,
+      "salePrice": 149,
+      "stockQuantity": 8,
+      "image": "assets/images/2ND_MINIBOX.png",
+      "foodType": "VEG",
+      "rating": 4.7,
+      "ratingCount": 36,
+      "deliveryMinutes": 25
+    },
+    {
+      "id": "snack-combo",
+      "name": "Chips & Drinks Combo",
+      "category": "snacks",
+      "unit": "1 combo",
+      "price": 89,
+      "salePrice": 69,
+      "stockQuantity": 10,
+      "image": "assets/images/3RD_MINIBOX.png",
+      "foodType": "VEG",
+      "rating": 4.5,
+      "ratingCount": 62
+    },
+    {
+      "id": "breakfast-pack",
+      "name": "Dairy & Breakfast Pack",
+      "category": "dairy",
+      "unit": "1 pack",
+      "price": 109,
+      "stockQuantity": 15,
+      "image": "assets/images/4TH_MINIBOX.png",
+      "foodType": "EGG"
+    },
+    {
+      "id": "tomatoes",
+      "name": "Fresh Tomatoes",
+      "category": "produce",
+      "unit": "500 g",
+      "price": 25,
+      "salePrice": 1,
+      "stockQuantity": 6,
+      "image": null,
+      "foodType": "VEG"
+    },
+    {
+      "id": "rice",
+      "name": "Everyday Basmati Rice",
+      "category": "pantry",
+      "unit": "1 kg",
+      "price": 149,
+      "salePrice": 129,
+      "stockQuantity": 0,
+      "image": null,
+      "foodType": "VEG"
+    }
+  ]
+}

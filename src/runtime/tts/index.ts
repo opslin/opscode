@@ -1,12 +1,3 @@
-// Read aloud (V3): Pocket TTS (Kyutai) on this Mac, through sherpa-onnx. The voice files (about 98 MB to download,
-// 212 MB on disk) are fetched once from the sherpa-onnx project's GitHub release when the person agrees, checked
-// against a pinned SHA-256, and unpacked into <state>/tts. A reply is cleaned to speakable sentences (speakable.ts),
-// each sentence is turned into speech by a worker process (worker.ts, started on first use, stopped when idle) and
-// sent to the window as `tts.event` audio. The window plays it, so pause, stop and speed need no round trip.
-//
-// Test overrides: OPSCODE_TTS_URL + OPSCODE_TTS_SHA256 + OPSCODE_TTS_FILES (names, comma separated),
-// OPSCODE_TTS_WORKER (a stand-in worker), OPSCODE_TTS_IDLE_MS.
-
 import { tarProgram } from "../voice/models";
 import { fork, spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
@@ -15,44 +6,46 @@ import http from "node:http";
 import https from "node:https";
 import { join } from "node:path";
 import type { RpcNotification } from "../../shared/protocol";
+import { downloadModels } from "../voice/download";
+import { LOCAL_VOICE_ERROR, localVoiceAvailable } from "../voice/localRuntime";
+import { KITTEN_FILES, KITTEN_LANGUAGES, KITTEN_VOICES } from "./kitten";
 import { speakableSentences } from "./speakable";
 
-const FOLDER = "sherpa-onnx-pocket-tts-int8-2026-01-26";
-const REAL = {
-  url: `https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/${FOLDER}.tar.bz2`,
-  bytes: 98_336_520,
-  sha256: "2f3b88823cbbb9bf0b2477ec8ae7b3fec417b3a87b6bb5f256dba66f2ad967cb",
-  files: {
-    "lm_flow.int8.onnx": 9_962_530, "lm_main.int8.onnx": 76_341_079, "encoder.onnx": 72_713_165, "decoder.int8.onnx": 22_693_618,
-    "text_conditioner.onnx": 16_388_343, "vocab.json": 69_478, "token_scores.json": 123_616,
-    "test_wavs/bria.wav": 2_152_986, "test_wavs/loona.wav": 50_478,
-  } as Record<string, number>,
-  disk: 212_000_000,
-};
-export const VOICES = [{ id: "bria", name: "Bria" }, { id: "loona", name: "Loona" }];
-export const LICENSE_NOTE = "Pocket TTS by Kyutai, as exported to ONNX by KevinAHM and packaged by sherpa-onnx. Creative Commons Attribution 4.0; the export's README asks for personal, non-commercial use. Do not use it to imitate a real person.";
+const FOLDER = "kitten-tts-2-mini";
+const FIXTURE_FOLDER = "sherpa-onnx-pocket-tts-int8-2026-01-26";
+const MODEL_BYTES = KITTEN_FILES.reduce((sum, file) => sum + file.bytes, 0);
+const LICENSE_NOTE = "Kitten TTS 2 Mini by KittenML, Apache-2.0.";
+// The fixture worker still tests migration from existing Pocket TTS settings.
+const FIXTURE_VOICES = [{ id: "bria", name: "Bria", language: "en" }, { id: "loona", name: "Loona", language: "en" }];
+export const VOICES = KITTEN_VOICES;
 
 const LOOKAHEAD = 3; // sentences generated ahead of the one being played
 const hostOk = (h: string): boolean => h === "github.com" || h.endsWith(".githubusercontent.com");
 
 export interface TtsStatus {
-  engine: "Pocket TTS";
+  engine: "Kitten TTS 2 Mini";
+  available: boolean;
+  error?: string;
+  install_error: string;
+  languages: string[];
   installed: boolean;
   installing: { phase: string; progress: number; bytes: number; total: number } | null;
   download_bytes: number;
   disk_bytes: number;
-  voices: { id: string; name: string }[];
+  voices: typeof VOICES;
   loaded: boolean;
   license: string;
 }
 
-interface Session { id: string; sentences: string[]; voice: string; steps: number; next: number; played: number; inflight: boolean; stopped: boolean; done: boolean; /** More sentences may still be added (a reply that is being written). */ live?: boolean }
+interface Session { id: string; sentences: string[]; voice: string; language: string; hint?: string; steps: number; next: number; played: number; inflight: boolean; stopped: boolean; done: boolean; /** More sentences may still be added (a reply that is being written). */ live?: boolean }
 
 export class TtsService {
   private readonly root: string;
   private readonly spec: { url: string; bytes: number; sha256: string; files: Record<string, number>; test: boolean };
   private worker: ChildProcess | null = null;
   private ready: Promise<void> | null = null;
+  private workerReady = false;
+  private installError = "";
   private idle: NodeJS.Timeout | undefined;
   private session: Session | null = null;
   private installing: TtsStatus["installing"] = null;
@@ -62,10 +55,10 @@ export class TtsService {
     const url = process.env.OPSCODE_TTS_URL;
     this.spec = url
       ? { url, bytes: 0, sha256: process.env.OPSCODE_TTS_SHA256 ?? "", files: Object.fromEntries((process.env.OPSCODE_TTS_FILES ?? "").split(",").filter(Boolean).map((f) => [f, -1])), test: true }
-      : { ...REAL, test: false };
+      : { url: "", bytes: MODEL_BYTES, sha256: "", files: Object.fromEntries(KITTEN_FILES.map((file) => [file.name, file.bytes])), test: false };
   }
 
-  private get dir(): string { return join(this.root, FOLDER); }
+  private get dir(): string { return join(this.root, this.spec.test ? FIXTURE_FOLDER : FOLDER); }
 
   private installed(): boolean {
     try {
@@ -78,7 +71,11 @@ export class TtsService {
   }
 
   status(): TtsStatus {
-    return { engine: "Pocket TTS", installed: this.installed(), installing: this.installing, download_bytes: this.spec.test ? 0 : REAL.bytes, disk_bytes: REAL.disk, voices: VOICES, loaded: !!this.worker && this.worker.connected, license: LICENSE_NOTE };
+    const available = this.spec.test || localVoiceAvailable();
+    return { engine: "Kitten TTS 2 Mini", available, ...(available ? {} : { error: LOCAL_VOICE_ERROR }),
+      installed: this.installed(), installing: this.installing, install_error: this.installError,
+      download_bytes: this.spec.bytes, disk_bytes: this.spec.bytes, voices: VOICES, languages: KITTEN_LANGUAGES,
+      loaded: this.workerReady, license: LICENSE_NOTE };
   }
 
   private emit(params: Record<string, unknown>): void {
@@ -90,16 +87,32 @@ export class TtsService {
   /** Downloads and unpacks the voice. Only called when the person said yes; progress arrives as tts.event install. */
   install(): { started: boolean } {
     if (this.installing || this.installed()) return { started: false };
+    if (!this.spec.test && !localVoiceAvailable()) throw new Error(LOCAL_VOICE_ERROR);
+    this.installError = "";
     this.installing = { phase: "download", progress: 0, bytes: 0, total: this.spec.bytes };
     void this.runInstall().catch((e) => {
       this.log(`tts: install failed: ${e instanceof Error ? e.message : String(e)}`);
       this.installing = null;
-      this.emit({ ev: "install", phase: "error", message: e instanceof Error ? e.message : String(e) });
+      this.installError = e instanceof Error ? e.message : String(e);
+      this.emit({ ev: "install", phase: "error", message: this.installError });
     });
     return { started: true };
   }
 
   private async runInstall(): Promise<void> {
+    if (!this.spec.test) {
+      let last = 0;
+      await downloadModels(this.dir, KITTEN_FILES, (bytes) => {
+        if (Date.now() - last < 250) return;
+        last = Date.now();
+        const progress = bytes / MODEL_BYTES;
+        this.installing = { phase: "download", progress, bytes, total: MODEL_BYTES };
+        this.emit({ ev: "install", ...this.installing });
+      });
+      this.installing = null;
+      this.emit({ ev: "install", phase: "done", progress: 1 });
+      return;
+    }
     mkdirSync(this.root, { recursive: true, mode: 0o700 });
     const tmp = join(this.root, "download.tmp");
     const work = join(this.root, `.extract-${randomBytes(4).toString("hex")}`);
@@ -122,7 +135,7 @@ export class TtsService {
       set("extract", 1, got.bytes);
       mkdirSync(work, { recursive: true, mode: 0o700 });
       await this.untar(tmp, work);
-      const unpacked = join(work, FOLDER);
+      const unpacked = join(work, FIXTURE_FOLDER);
       for (const [f, size] of Object.entries(this.spec.files)) {
         const s = statSync(join(unpacked, f));
         if (size >= 0 && s.size !== size) throw new Error(`${f} has the wrong size after unpacking`);
@@ -181,28 +194,52 @@ export class TtsService {
     });
     return run(["-tjf", file]).then((list) => {
       for (const name of list.split("\n").map((l) => l.trim()).filter(Boolean)) {
-        if (name.startsWith("/") || name.split("/").includes("..") || !(name === `${FOLDER}/` || name.startsWith(`${FOLDER}/`))) throw new Error(`the archive holds an unexpected path: ${name.slice(0, 80)}`);
+        if (name.startsWith("/") || name.split("/").includes("..") || !(name === `${FIXTURE_FOLDER}/` || name.startsWith(`${FIXTURE_FOLDER}/`))) throw new Error(`the archive holds an unexpected path: ${name.slice(0, 80)}`);
       }
       return run(["-xjf", file, "-C", into, "--no-same-owner"]).then(() => undefined);
     });
   }
 
-  /** Deletes the voice files (about 212 MB). */
+  /** Deletes the installed Kitten voice files. */
   remove(): { freed: number } {
+    if (this.installing) throw new Error("Wait for the voice download to finish before removing it.");
+    this.installError = "";
     this.stop();
     this.killWorker();
-    const had = this.installed();
+    const freed = this.installed()
+      ? Object.keys(this.spec.files).reduce((total, file) => total + statSync(join(this.dir, file)).size, 0)
+      : 0;
     rmSync(this.dir, { recursive: true, force: true });
-    return { freed: had ? REAL.disk : 0 };
+    return { freed };
   }
 
   // ---- the worker ---------------------------------------------------------------------------------------------------------
+
+  /** While voice mode is on the voice stays loaded (no idle unload between replies): each reply starts at once. */
+  private held = 0;
+
+  /**
+   * Loads the voice now, before the first sentence (voice mode starts it as soon as the person opens it, so the agent's
+   * first words are not lost to the model loading). hold=true keeps it loaded until release().
+   */
+  warm(hold = false): void {
+    if (!this.installed()) return;
+    if (hold) this.held++;
+    this.touch();
+    this.ensureWorker().catch((e) => this.log(`tts: warm-up failed: ${e instanceof Error ? e.message : String(e)}`));
+  }
+
+  /** Voice mode ended: the voice may unload when idle again. */
+  release(): void {
+    this.held = Math.max(0, this.held - 1);
+    this.touch();
+  }
 
   private touch(): void {
     clearTimeout(this.idle);
     const ms = Number(process.env.OPSCODE_TTS_IDLE_MS) || 180_000;
     // Idle = nothing is being made: no session, or one that was stopped or has had all its audio sent.
-    this.idle = setTimeout(() => { const s = this.session; if (!s || s.stopped || s.done) this.killWorker(); else this.touch(); }, ms);
+    this.idle = setTimeout(() => { const s = this.session; if (!this.held && (!s || s.stopped || s.done)) this.killWorker(); else this.touch(); }, ms);
     this.idle.unref?.();
   }
 
@@ -211,6 +248,7 @@ export class TtsService {
     const w = this.worker;
     this.worker = null;
     this.ready = null;
+    this.workerReady = false;
     if (w && w.exitCode === null) { try { w.send({ t: "exit" }); } catch { /* gone */ } setTimeout(() => { try { w.kill(); } catch { /* gone */ } }, 1000).unref(); }
   }
 
@@ -219,22 +257,28 @@ export class TtsService {
     const path = process.env.OPSCODE_TTS_WORKER || join(__dirname, "worker.js");
     const w = fork(path, [], { serialization: "advanced", stdio: ["ignore", "pipe", "pipe", "ipc"], env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } });
     this.worker = w;
+    w.stdout?.resume();
     w.stderr?.on("data", (d: Buffer) => this.log(`tts: ${String(d).trim().slice(0, 300)}`));
     this.ready = new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("the voice took too long to load")), 60_000);
+      const timer = setTimeout(() => {
+        reject(new Error("Kitten took too long to load"));
+        if (this.worker === w) this.killWorker();
+      }, 60_000);
       timer.unref?.();
       w.on("message", (m: Record<string, unknown>) => {
         if (m.t === "hello") w.send({ t: "init", dir: this.dir, threads: 2 });
-        else if (m.t === "ready") { clearTimeout(timer); this.log(`tts: voice loaded in ${m.ms} ms`); resolve(); }
-        else if (m.t === "error" && !m.id) { clearTimeout(timer); reject(new Error(String(m.message))); }
+        else if (m.t === "ready") { if (this.worker !== w) return; this.workerReady = true; clearTimeout(timer); this.log(`tts: voice loaded in ${m.ms} ms`); resolve(); }
+        else if (m.t === "error" && !m.id) { clearTimeout(timer); reject(new Error(String(m.message))); if (this.worker === w) this.killWorker(); }
         else this.onWorker(m);
       });
+      w.on("error", (error) => { clearTimeout(timer); reject(error); if (this.worker === w) this.killWorker(); });
       w.on("exit", () => {
         clearTimeout(timer);
-        if (this.worker === w) { this.worker = null; this.ready = null; }
+        reject(new Error("the voice stopped"));
+        if (this.worker !== w) return;
+        this.worker = null; this.ready = null; this.workerReady = false;
         const s = this.session;
         if (s && !s.stopped) { s.stopped = true; this.emit({ session: s.id, ev: "error", message: "The voice stopped unexpectedly." }); }
-        reject(new Error("the voice stopped"));
       });
     });
     this.ready.catch(() => {});
@@ -245,7 +289,7 @@ export class TtsService {
     const s = this.session;
     const id = typeof m.id === "string" ? m.id : "";
     const [sid, idx] = id.split(":");
-    if (!s || s.id !== sid) return; // a stopped session's late answer
+    if (!s || s.id !== sid || s.stopped) return; // a stopped session's late answer
     s.inflight = false;
     if (m.t === "audio") {
       const i = Number(idx);
@@ -265,14 +309,19 @@ export class TtsService {
 
   // ---- speaking -------------------------------------------------------------------------------------------------------------
 
+  private voiceOptions(o: { voice?: string; language?: string; hint?: string }): Pick<Session, "voice" | "language" | "hint"> {
+    const voices = this.spec.test ? FIXTURE_VOICES : VOICES;
+    const chosen = voices.find((v) => v.id === o.voice);
+    return { voice: chosen?.id ?? (this.spec.test ? voices[0].id : ""), language: o.language ?? chosen?.language ?? "auto", hint: o.hint };
+  }
+
   /** Reads a reply aloud: the person's markdown in, sentences out as audio events. */
-  speak(o: { text: string; voice?: string; steps?: number }): { session: string; sentences: number } {
+  speak(o: { text: string; voice?: string; language?: string; hint?: string; steps?: number }): { session: string; sentences: number } {
     if (!this.installed()) throw new Error("The voice is not installed yet.");
     const sentences = speakableSentences(o.text);
     if (!sentences.length) throw new Error("There is nothing to read aloud in this reply.");
-    const voice = VOICES.some((v) => v.id === o.voice) ? (o.voice as string) : VOICES[0].id;
     this.stop();
-    const s: Session = { id: randomUUID(), sentences, voice, steps: o.steps ?? 5, next: 0, played: 0, inflight: false, stopped: false, done: false };
+    const s: Session = { id: randomUUID(), sentences, ...this.voiceOptions(o), steps: o.steps ?? 5, next: 0, played: 0, inflight: false, stopped: false, done: false };
     this.session = s;
     this.emit({ session: s.id, ev: "started", n: sentences.length });
     this.touch();
@@ -284,11 +333,10 @@ export class TtsService {
   }
 
   /** Starts a reply that is still being written: sentences arrive with feed(), the end with finish(). */
-  speakLive(o: { voice?: string; steps?: number } = {}): { session: string } {
+  speakLive(o: { voice?: string; language?: string; hint?: string; steps?: number } = {}): { session: string } {
     if (!this.installed()) throw new Error("The voice is not installed yet.");
-    const voice = VOICES.some((v) => v.id === o.voice) ? (o.voice as string) : VOICES[0].id;
     this.stop();
-    const s: Session = { id: randomUUID(), sentences: [], voice, steps: o.steps ?? 5, next: 0, played: 0, inflight: false, stopped: false, done: false, live: true };
+    const s: Session = { id: randomUUID(), sentences: [], ...this.voiceOptions(o), steps: o.steps ?? 5, next: 0, played: 0, inflight: false, stopped: false, done: false, live: true };
     this.session = s;
     this.emit({ session: s.id, ev: "started", n: 0, live: true });
     this.touch();
@@ -330,10 +378,10 @@ export class TtsService {
 
   private pump(): void {
     const s = this.session;
-    if (!s || s.stopped || s.inflight || s.next >= s.sentences.length || s.next - s.played > LOOKAHEAD || !this.worker?.connected) return;
+    if (!s || s.stopped || s.inflight || s.next >= s.sentences.length || s.next - s.played > LOOKAHEAD || !this.workerReady || !this.worker?.connected) return;
     s.inflight = true;
     this.touch();
-    this.worker.send({ t: "speak", id: `${s.id}:${s.next}`, text: s.sentences[s.next], voice: s.voice, steps: s.steps });
+    this.worker.send({ t: "speak", id: `${s.id}:${s.next}`, text: s.sentences[s.next], voice: s.voice, language: s.language, hint: s.hint, steps: s.steps });
   }
 
   /** The window started playing sentence `played`: generation may run further ahead. */

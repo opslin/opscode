@@ -24,7 +24,7 @@ process.stdin.on("data", (d) => {
     else if (m.cmd === "locales") out({ ev: "locales", speech: ["en-IN", "en-US"], dictation: ["en-IN", "en-US", "fr-FR"], installed: ["en-US"] });
     else if (m.cmd === "converse") {
       // Conversation mode: audio chunks are scripts. "SAY:<words>" = the person says those words, "SPEECH" = they start
-      // talking and say nothing yet, "NOISE" = a sound that is not speech. Anything else is quiet.
+      // talking and say nothing yet, "NOISE" = a sound that is not speech. Use "SAY[hi]:<UTF-8 words>" to include a language.
       if (listening || conversing) { out({ ev: "error", code: "busy", message: "Already listening" }); continue; }
       if (process.env.OPSCODE_FAKE_VOICE_CONVERSE_ERROR) { out({ ev: "error", code: process.env.OPSCODE_FAKE_VOICE_CONVERSE_ERROR, message: "fake converse failure" }); continue; }
       conversing = true;
@@ -33,11 +33,14 @@ process.stdin.on("data", (d) => {
     } else if (m.cmd === "audio") {
       if (!conversing) continue;
       const text = Buffer.from(String(m.pcm), "base64").toString("latin1");
-      if (text.startsWith("SAY:")) {
-        const words = text.slice(4).split(" ");
+      const utterance = /^SAY(?:\[([a-z]{2,3})\])?:(.*)$/s.exec(text);
+      if (utterance) {
+        const [, language, rawWords] = utterance;
+        const phrase = language ? Buffer.from(rawWords, "latin1").toString("utf8") : rawWords;
+        const words = phrase.split(" ");
         out({ ev: "speech" });
         for (let k = 1; k <= words.length; k++) out({ ev: "partial", text: words.slice(0, k).join(" ") });
-        setTimeout(() => out({ ev: "utterance", text: text.slice(4), ms: 1200 }), 40);
+        setTimeout(() => out({ ev: "utterance", text: phrase, language, ms: 1200 }), 40);
       } else if (text === "SPEECH") out({ ev: "speech" });
       else if (text === "NOISE") { out({ ev: "speech" }); setTimeout(() => out({ ev: "noise", ms: 400 }), 30); }
     } else if (m.cmd === "vad") {

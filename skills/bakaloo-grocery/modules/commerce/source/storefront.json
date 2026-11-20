@@ -1,0 +1,85 @@
+{
+  "brand": "Fresh Basket",
+  "address": "Home \u00b7 12 Lake View Road",
+  "deliveryMinutes": 25,
+  "categories": [
+    {
+      "id": "all",
+      "name": "All",
+      "icon": "basket"
+    },
+    {
+      "id": "produce",
+      "name": "Produce",
+      "icon": "leaf"
+    },
+    {
+      "id": "dairy",
+      "name": "Dairy",
+      "icon": "milk"
+    },
+    {
+      "id": "pantry",
+      "name": "Pantry",
+      "icon": "grain"
+    },
+    {
+      "id": "snacks",
+      "name": "Snacks",
+      "icon": "snack"
+    }
+  ],
+  "promos": [
+    {
+      "label": "Fresh Basket market",
+      "image": "assets/commerce/market-hero.webp",
+      "category": "produce"
+    },
+    {
+      "label": "Everyday essentials",
+      "image": "assets/images/everyday_essentials.png",
+      "category": "pantry"
+    }
+  ],
+  "products": [
+    {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "name": "Vine Tomatoes",
+      "category": "produce",
+      "unit": "500 g",
+      "price": 65,
+      "salePrice": 49,
+      "stockQuantity": 28,
+      "image": "assets/commerce/tomato.webp"
+    },
+    {
+      "id": "22222222-2222-4222-8222-222222222222",
+      "name": "Fresh Whole Milk",
+      "category": "dairy",
+      "unit": "500 ml",
+      "price": 72,
+      "stockQuantity": 18,
+      "image": "assets/commerce/milk.webp"
+    },
+    {
+      "id": "33333333-3333-4333-8333-333333333333",
+      "name": "Aged Basmati Rice",
+      "category": "pantry",
+      "unit": "1 kg",
+      "price": 169,
+      "salePrice": 149,
+      "stockQuantity": 22,
+      "image": "assets/commerce/rice.webp"
+    },
+    {
+      "id": "44444444-4444-4444-8444-444444444444",
+      "name": "Roasted Makhana",
+      "category": "snacks",
+      "unit": "100 g",
+      "price": 115,
+      "salePrice": 99,
+      "stockQuantity": 15,
+      "image": "assets/commerce/snack.webp"
+    }
+  ]
+}

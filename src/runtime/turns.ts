@@ -7,8 +7,8 @@
 // EchoEngine is a deliberate STUB so the streaming contract can be built and
 // tested now. Transcripts are in memory only for this phase.
 
-import { randomUUID } from "node:crypto";
-import { LIMITS, isAgentEngine, type AgentEngineId, type ChatMessage, type ChatMeta, type PermissionMode, type MessagePart, type RpcNotification, type TurnEvent, type TurnEventType, type Workspace } from "../shared/protocol";
+import { createHash, randomUUID } from "node:crypto";
+import { LIMITS, isAgentEngine, type AgentEngineId, type ApprovalChoice, type AskAnswer, type AskQuestion, type ChatMessage, type ChatMeta, type PermissionMode, type MessagePart, type RpcNotification, type TurnEvent, type TurnEventType, type Workspace } from "../shared/protocol";
 import { fail } from "./rpc";
 import type { Tool } from "./agent/tools";
 import { attachedNote, resolveAttached } from "./attachments";
@@ -20,6 +20,18 @@ import type { LedgerStore, LedgerView } from "./ledger";
 import { buildPack, gitSummary, planHandoff, recentMessages, tokensOf, type HandoffPlan } from "./handoff";
 import { isLimitError, lastModelOn, type AutoSwitch } from "./autoswitch";
 import { isAuthError } from "./engines/accounts";
+import { lowDiskCard } from "./disk";
+import { answerMessage, answerText, checkAnswers, parseQuestionBlock, questionSummary, type AskResult } from "./ask";
+
+/** Nobody watches a Manager's worker or an automation's step: a question there is answered at once. */
+function defaultNoAsk(chat: ChatMeta | undefined): string | undefined {
+  if (chat?.origin) return "Nobody can answer now: this chat is a step of an automation.";
+  if (chat?.chief && chat.chief.role !== "home") return "Nobody can answer now: this chat is a Manager's worker. Put the open question in your report.";
+  return undefined;
+}
+
+/** How often a running turn checks free disk space. */
+const DISK_CHECK_MS = Number(process.env.OPSCODE_DISK_CHECK_MS) || 10 * 60_000;
 
 export interface EngineInput {
   text: string;
@@ -44,6 +56,8 @@ export interface TurnHost {
   memory: string;
   /** The chat's permission mode right now (it can change mid-turn). */
   mode(): PermissionMode;
+  /** Auto mode only: the person said "decide yourself" (voice mode), so only high-risk steps ask (engines/safety.ts autoAsks). */
+  trusted?(): boolean;
   /** Tools beyond the built-ins (MCP servers). */
   extraTools: Tool[];
   saveNote(title: string, body: string): void;
@@ -55,9 +69,11 @@ export interface TurnHost {
   /** Sub-agents this chat can hand tasks to, and one's definition by name. */
   agents: { name: string; description: string }[];
   getAgent(name: string): { name: string; access: "read" | "edit" | "full"; body: string } | undefined;
-  toolStart(call: { call_id: string; tool: string; summary: string; detail?: string }, needsApproval: boolean): void;
+  toolStart(call: { call_id: string; tool: string; summary: string; detail?: string; choices?: ApprovalChoice[] }, needsApproval: boolean): void;
   /** For engines that ask after a tool card is already shown: marks it awaiting approval, then resolves with the decision. */
-  askApproval(callId: string, card?: { summary: string; detail?: string }): Promise<boolean>;
+  askApproval(callId: string, card?: { summary: string; detail?: string; choices?: ApprovalChoice[] }): Promise<boolean>;
+  /** The choice the person picked on the last card that offered choices (undefined: none offered). */
+  choiceOf?(callId: string): string | undefined;
   /** The project's branch rule, for engines that guard branch creation (engines/branchGuard.ts). */
   branch?: BranchHost;
   /** Asks about creating a new git branch with the branch card; the answer may ask to remember it. */
@@ -70,6 +86,8 @@ export interface TurnHost {
   setEngineState(patch: { engine_session?: string; usage?: import("../shared/protocol").ChatUsage; connectors?: import("../shared/protocol").ChatConnector[] }): void;
   /** Resolves with the user's decision; false if denied or the turn is stopped. */
   approve(callId: string): Promise<boolean>;
+  /** Turns the call's card into a question card and waits for the person's answer (skipped when nobody can answer or the turn stops). */
+  askUser?(callId: string, questions: AskQuestion[], card?: { tool?: string; summary?: string }): Promise<AskResult>;
   /** Set for a Chief's own chat: its prompt and its only tools (MCP endpoint for Claude Code). */
   chief?: ChiefBrain;
   /** Device tools (browser) for engines that run outside the runtime (MCP over HTTP, this turn's token). */
@@ -126,7 +144,16 @@ interface Running {
   approvals: Map<string, (allowed: boolean, remember?: "allow" | "current") => void>;
   /** What the person asked to remember with a branch answer, by call id. */
   remembered: Map<string, "allow" | "current">;
+  /** Which of a card's choices the person picked, by call id. */
+  chosen: Map<string, string>;
+  /** The choices each open card offered, by call id (only these ids are accepted). */
+  offered: Map<string, ApprovalChoice[]>;
+  /** Open question cards by call id. */
+  questions: Map<string, { questions: AskQuestion[]; resolve: (r: AskResult) => void }>;
 }
+
+/** A question card shown after a turn ended (an agent that asked in its reply): its answer starts the next turn. */
+interface LateCard { turnId: string; chatId: string; workspaceId: string; questions: AskQuestion[] }
 
 export interface TurnDeps {
   /** Chosen per turn from the chat's engine, so a change applies to the next message. */
@@ -154,6 +181,8 @@ export interface TurnDeps {
   turnEnded?(chatId: string): void;
   /** A chat was deleted. */
   chatDeleted?(chatId: string): void;
+  /** Why nobody can answer a question card in this chat right now (a reason), or undefined when the person can. */
+  noAsk?(chat: ChatMeta): string | undefined;
   /** The task ledger (what happened in each chat, kept by Opscode for hand-offs between engines). */
   ledger?: LedgerStore;
   /** H4: move a chat to the other engine when one runs out of its plan limit. */
@@ -173,7 +202,14 @@ export interface ToolScope {
 export class TurnManager {
   private readonly running = new Map<string, Running>(); // by chat
   private readonly known = new Map<string, string>(); // turn -> chat
+  /** Chats whose person said "decide yourself" (voice mode): in auto mode only high-risk steps ask. */
+  private readonly trustedChats = new Set<string>();
+
+  /** Voice mode's "allow it yourself": in auto mode, medium-risk steps of this chat stop asking. */
+  setTrusted(chatId: string, on: boolean): void { if (on) this.trustedChats.add(chatId); else this.trustedChats.delete(chatId); }
   private readonly done = new Map<string, { status: string; text: string; error?: string }>();
+  /** Question cards from ended turns, by call id. */
+  private readonly late = new Map<string, LateCard>();
   private readonly waiters = new Map<string, ((r: { status: string; text: string; error?: string }) => void)[]>();
 
   /** Resolves when the turn ends: completed, failed or interrupted, with the reply text. */
@@ -205,7 +241,7 @@ export class TurnManager {
    * Starts a turn. Without chat_id it continues the project's most recent chat
    * (creating one if there is none).
    */
-  submit(workspaceId: string, chatId: string | undefined, text: string, opts: { engineText?: string; event?: boolean; images?: string[]; attachments?: string[]; attachNote?: string; limitFrom?: string } = {}): { turn_id: string; chat_id: string; engine: string } {
+  submit(workspaceId: string, chatId: string | undefined, text: string, opts: { engineText?: string; event?: boolean; images?: string[]; attachments?: string[]; attachNote?: string; limitFrom?: string; requestId?: string } = {}): { turn_id: string; chat_id: string; engine: string } {
     const workspace = this.deps.workspace(workspaceId);
     if (!workspace) throw fail.notFound("no such workspace");
     let chat: ChatMeta | undefined;
@@ -214,6 +250,14 @@ export class TurnManager {
       if (!chat || chat.workspace_id !== workspaceId) throw fail.notFound("no such chat");
     } else {
       chat = this.deps.chats.latest(workspaceId) ?? this.deps.chats.create(workspaceId, this.deps.defaultMode());
+    }
+    const requestHash = opts.requestId ? createHash("sha256").update(JSON.stringify([text, opts.attachments ?? []])).digest("hex") : undefined;
+    if (opts.requestId) {
+      const prior = this.deps.chats.transcript(chat.id).find((message) => message.role === "user" && message.request_id === opts.requestId);
+      if (prior) {
+        if (prior.request_hash !== requestHash) throw fail.conflict("This request was already used for a different message.");
+        return { turn_id: prior.turn_id, chat_id: chat.id, engine: chat.engine ?? "api" };
+      }
     }
     if (this.running.has(chat.id)) throw fail.conflict("a turn is already running in this chat");
     const root = this.deps.rootOf(workspace); // throws if the folder vanished or was swapped
@@ -245,7 +289,7 @@ export class TurnManager {
     const attached = opts.attachments?.length ? resolveAttached(root, opts.attachments) : [];
     const transcript = this.deps.chats.transcript(chat.id);
     const history = transcript.slice();
-    transcript.push({ role: "user", text, turn_id: turnId, status: "complete", ...(opts.event ? { event: true } : {}), ...(attached.length ? { attachments: attached.map((a) => ({ path: a.path, name: a.name, kind: a.kind, ...(a.files !== undefined ? { files: a.files } : {}), ...(a.ref ? { ref: true } : {}) })) } : {}) });
+    transcript.push({ role: "user", text, turn_id: turnId, status: "complete", ...(opts.requestId ? { request_id: opts.requestId, request_hash: requestHash } : {}), ...(opts.event ? { event: true } : {}), ...(attached.length ? { attachments: attached.map((a) => ({ path: a.path, name: a.name, kind: a.kind, ...(a.files !== undefined ? { files: a.files } : {}), ...(a.ref ? { ref: true } : {}) })) } : {}) });
     const reply: ChatMessage = { role: "assistant", text: "", turn_id: turnId, status: "streaming", parts: [] };
     transcript.push(reply);
     if (transcript.length > LIMITS.TURN_HISTORY_MAX_MESSAGES) {
@@ -260,12 +304,16 @@ export class TurnManager {
     this.led((l) => l.turnStart(started.id, { turn_id: turnId, engine: engine.id, ...(started.model ? { model: started.model } : {}), ...(started.effort ? { effort: started.effort } : {}), text, root, ...(opts.event ? { event: true } : {}) }));
     this.chatsChanged();
 
-    const running: Running = { turnId, controller, approvals: new Map(), remembered: new Map() };
-    // Stopping a turn denies anything still waiting for approval.
+    const running: Running = { turnId, controller, approvals: new Map(), remembered: new Map(), chosen: new Map(), offered: new Map(), questions: new Map() };
+    // Stopping a turn denies anything still waiting for approval, and closes open questions.
     controller.signal.addEventListener("abort", () => {
       for (const resolve of running.approvals.values()) resolve(false);
       running.approvals.clear();
+      for (const q of running.questions.values()) q.resolve({ skipped: true, reason: "The turn was stopped." });
+      running.questions.clear();
     }, { once: true });
+    // A new message answers a question card left open by the last turn (the agent asked in its reply).
+    for (const [id, late] of this.late) if (late.chatId === chat.id) this.late.delete(id);
     this.running.set(chat.id, running);
     this.known.set(turnId, chat.id);
     const chatIdFinal = chat.id;
@@ -277,15 +325,68 @@ export class TurnManager {
   }
 
   /** The user's decision on a tool call that asked for approval. */
-  approve(turnId: string, callId: string, allow: boolean, remember?: "allow" | "current"): { resolved: boolean } {
+  approve(turnId: string, callId: string, allow: boolean, remember?: "allow" | "current", choice?: string): { resolved: boolean } {
     const chatId = this.known.get(turnId);
     if (chatId === undefined) throw fail.notFound("no such turn");
     const r = this.running.get(chatId);
     const resolve = r?.turnId === turnId ? r.approvals.get(callId) : undefined;
     if (!r || !resolve) return { resolved: false };
+    const offered = r.offered.get(callId);
+    if (allow && offered?.length) {
+      // Only a choice the card offered counts. An answer with none picked takes the narrowest one (a task-only install).
+      const pick = choice !== undefined ? offered.find((c) => c.id === choice) : (offered.find((c) => c.id === "temp") ?? offered[0]);
+      if (!pick) throw fail.invalid(`this card offers: ${offered.map((c) => c.id).join(", ")}`);
+      r.chosen.set(callId, pick.id);
+    }
+    r.offered.delete(callId);
     r.approvals.delete(callId);
     resolve(allow, remember);
     return { resolved: true };
+  }
+
+  /**
+   * The person's answer to a question card: answers per question, or skip. A card from a turn that already ended
+   * (the agent asked in its reply) is answered by sending the answer as the chat's next message.
+   */
+  answer(turnId: string, callId: string, answers: AskAnswer[] | undefined, skip: boolean): { resolved: boolean; turn_id?: string; text?: string } {
+    const chatId = this.known.get(turnId);
+    if (chatId === undefined) throw fail.notFound("no such turn");
+    const r = this.running.get(chatId);
+    const open = r?.turnId === turnId ? r.questions.get(callId) : undefined;
+    const late = open ? undefined : this.late.get(callId);
+    const questions = open?.questions ?? (late?.turnId === turnId ? late.questions : undefined);
+    if (!questions) return { resolved: false };
+    if (!skip) {
+      if (!answers?.length) throw fail.invalid("give answers, or skip");
+      const bad = checkAnswers(questions, answers);
+      if (bad) throw fail.invalid(bad);
+    }
+    const result: AskResult = skip ? { skipped: true, reason: "The user skipped the question." } : { answers: answers ?? [] };
+    if (open && r) {
+      r.questions.delete(callId);
+      open.resolve(result);
+      return { resolved: true };
+    }
+    if (!late) return { resolved: false };
+    this.late.delete(callId);
+    this.markAnswered(late.chatId, callId, result);
+    if (this.running.has(late.chatId)) throw fail.conflict("a turn is already running in this chat");
+    const text = answerMessage(questions, result);
+    const next = this.submit(late.workspaceId, late.chatId, text);
+    return { resolved: true, turn_id: next.turn_id, text };
+  }
+
+  /** Records an answer on the card in the chat's transcript (for a card from an ended turn). */
+  private markAnswered(chatId: string, callId: string, result: AskResult): void {
+    for (const m of this.deps.chats.transcript(chatId)) {
+      const p = m.parts?.find((x): x is Extract<MessagePart, { kind: "tool" }> => x.kind === "tool" && x.call_id === callId);
+      if (!p) continue;
+      p.status = "done";
+      if ("skipped" in result) p.skipped = true; else p.answers = result.answers;
+      p.output = "skipped" in result ? "Skipped" : result.answers.map(answerText).join("; ");
+      this.deps.chats.save(chatId);
+      return;
+    }
   }
 
   /** Stops a running turn. False if it had already finished. */
@@ -372,6 +473,7 @@ export class TurnManager {
       root,
       workspaceName: workspace.name,
       mode: () => this.deps.chats.get(chatId)?.mode ?? "supervised",
+      trusted: () => this.trustedChats.has(chatId),
       memory: this.deps.memory?.prompt(workspace.id) ?? "",
       extraTools,
       skills: this.deps.skills?.catalog(workspace.id) ?? [],
@@ -385,9 +487,11 @@ export class TurnManager {
       },
       toolStart: (c, needsApproval) => {
         this.led((l) => l.toolStart(chatId, c));
-        parts.push({ kind: "tool", call_id: c.call_id, tool: c.tool, summary: c.summary, ...(c.detail ? { detail: c.detail } : {}), status: needsApproval ? "awaiting_approval" : "running" });
+        const choices = needsApproval && c.choices?.length ? c.choices : undefined;
+        if (choices) running.offered.set(c.call_id, choices);
+        parts.push({ kind: "tool", call_id: c.call_id, tool: c.tool, summary: c.summary, ...(c.detail ? { detail: c.detail } : {}), ...(choices ? { choices } : {}), status: needsApproval ? "awaiting_approval" : "running" });
         emit("tool_start", { call_id: c.call_id, tool: c.tool, summary: c.summary, ...(c.detail ? { detail: c.detail } : {}) });
-        if (needsApproval) emit("approval_request", { call_id: c.call_id, tool: c.tool });
+        if (needsApproval) emit("approval_request", { call_id: c.call_id, tool: c.tool, summary: c.summary, detail: c.detail, ...(choices ? { choices } : {}) });
       },
       chat: { ...(this.deps.chats.get(chatId) as ChatMeta) },
       ...(this.deps.accounts && isAgentEngine(engine.id) ? { account: this.deps.accounts.resolve(engine.id, this.deps.chats.get(chatId) as ChatMeta) } : {}),
@@ -401,10 +505,38 @@ export class TurnManager {
         if (part) {
           part.status = "awaiting_approval";
           // The engine's card was made from the call's arguments; the tool may know more by now (what it is, where from).
-          if (card) { part.summary = card.summary; if (card.detail) part.detail = card.detail; }
+          if (card) { part.summary = card.summary; if (card.detail) part.detail = card.detail; if (card.choices?.length) part.choices = card.choices; }
         }
-        emit("approval_request", { call_id: callId, tool: part?.tool ?? "tool", ...(card ? { summary: card.summary, ...(card.detail ? { detail: card.detail } : {}) } : {}) });
+        if (card?.choices?.length) running.offered.set(callId, card.choices);
+        emit("approval_request", { call_id: callId, tool: part?.tool ?? "tool",
+          summary: card?.summary ?? part?.summary, detail: card?.detail ?? part?.detail,
+          choices: card?.choices ?? part?.choices });
         return host.approve(callId);
+      },
+      choiceOf: (callId) => running.chosen.get(callId),
+      askUser: async (callId, questions, card) => {
+        const nobody = this.deps.noAsk?.(this.deps.chats.get(chatId) ?? (host.chat as ChatMeta)) ?? defaultNoAsk(this.deps.chats.get(chatId));
+        let part = toolPart(callId);
+        if (!part) {
+          host.toolStart({ call_id: callId, tool: card?.tool ?? "ask_user", summary: card?.summary ?? questionSummary(questions) }, false);
+          part = toolPart(callId);
+        }
+        if (nobody || signal.aborted) {
+          const reason = signal.aborted ? "The turn was stopped." : nobody!;
+          if (part) { part.questions = questions; part.skipped = true; }
+          return { skipped: true, reason };
+        }
+        if (part) { part.status = "awaiting_answer"; part.questions = questions; part.summary = card?.summary ?? questionSummary(questions); }
+        this.deps.chats.save(chatId);
+        emit("question", { call_id: callId, tool: part?.tool ?? "ask_user", summary: part?.summary ?? questionSummary(questions), questions });
+        const result = await new Promise<AskResult>((resolve) => running.questions.set(callId, { questions, resolve }));
+        if (part) {
+          part.status = "running";
+          if ("skipped" in result) part.skipped = true; else part.answers = result.answers;
+        }
+        this.deps.chats.save(chatId);
+        emit("question_answered", { call_id: callId, ...("skipped" in result ? { skipped: true } : { answers: result.answers }) });
+        return result;
       },
       branch: {
         policy: () => this.deps.branches?.get(workspace.id) ?? "ask",
@@ -479,6 +611,8 @@ export class TurnManager {
         toolEnd: host.toolEnd,
         approve: host.approve,
         askApproval: host.askApproval,
+        choiceOf: host.choiceOf,
+        ...(host.askUser ? { askUser: host.askUser } : {}),
       });
       host.devices = { url: this.deps.devices.url(), token: deviceToken, note: devicesNote(devTools.map((t) => t.def.name)), describe: (name, input) => devTools.find((t) => t.def.name === name)?.describe(input) };
     }
@@ -509,6 +643,20 @@ export class TurnManager {
       reply.handoff = info;
       emit("handoff", { handoff: info });
     }
+    // A nearly full disk breaks builds and saving: say so once per turn, at the start and while it runs.
+    let diskWarned = false;
+    const checkDisk = (): void => {
+      if (diskWarned || signal.aborted) return;
+      const card = lowDiskCard(root);
+      if (!card) return;
+      diskWarned = true;
+      const id = `disk-${turnId}`;
+      host.toolStart({ call_id: id, tool: "disk_space", summary: card.summary, detail: card.detail }, false);
+      host.toolEnd(id, { output: card.detail, is_error: true });
+    };
+    checkDisk();
+    const diskTimer = setInterval(checkDisk, DISK_CHECK_MS);
+    diskTimer.unref();
     try {
       await engine.run({ text, history, signal, ...(images?.length ? { images } : {}), ...(handoffInput ? { handoff: handoffInput } : {}) }, (delta) => {
         reply.text += delta;
@@ -540,13 +688,33 @@ export class TurnManager {
         emit("failed", { error: message });
       }
     } finally {
+      clearInterval(diskTimer);
       if (deviceToken) this.deps.devices?.grants.revoke(deviceToken);
       this.led((l) => l.turnEnd(chatId, { turn_id: turnId, status: reply.status ?? "failed", reply: reply.text, ...(reply.error ? { error: reply.error } : {}) }));
       try { this.deps.turnEnded?.(chatId); } catch (e) { this.deps.log(`turn end hook failed: ${String(e)}`); }
       // Anything still shown as running/awaiting did not finish.
-      for (const p of parts) if (p.kind === "tool" && (p.status === "running" || p.status === "awaiting_approval")) p.status = "error";
+      for (const p of parts) {
+        if (p.kind !== "tool") continue;
+        if (p.status === "awaiting_answer") { p.status = "done"; p.skipped = true; }
+        else if (p.status === "running" || p.status === "awaiting_approval") p.status = "error";
+      }
       const r = this.running.get(chatId);
       if (r?.turnId === turnId) this.running.delete(chatId);
+      // The agent asked in its reply (a "Questions:" block, the backup for agents without ask_user): show the same card;
+      // its answer is sent as the next message.
+      try {
+        const asked = parts.some((p) => p.kind === "tool" && !!p.questions);
+        const meta = this.deps.chats.get(chatId);
+        const qs = reply.status === "complete" && !asked && meta && !(this.deps.noAsk?.(meta) ?? defaultNoAsk(meta)) ? parseQuestionBlock(reply.text) : [];
+        if (qs.length) {
+          const callId = `ask-${turnId}`;
+          const summary = questionSummary(qs);
+          parts.push({ kind: "tool", call_id: callId, tool: "ask_user", summary, status: "awaiting_answer", questions: qs });
+          this.late.set(callId, { turnId, chatId, workspaceId: workspace.id, questions: qs });
+          if (this.late.size > 100) this.late.delete(this.late.keys().next().value as string);
+          emit("question", { call_id: callId, tool: "ask_user", summary, questions: qs });
+        }
+      } catch (e) { this.deps.log(`question block failed: ${String(e)}`); }
       const result = { status: reply.status, text: reply.text, ...(reply.error ? { error: reply.error } : {}) };
       this.done.set(turnId, result);
       if (this.done.size > 200) this.done.delete(this.done.keys().next().value as string);

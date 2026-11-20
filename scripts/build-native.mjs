@@ -6,6 +6,19 @@ import { join } from "node:path";
 
 const root = new URL("..", import.meta.url).pathname;
 if (process.platform !== "darwin") { console.log("native: skipped (not macOS)"); process.exit(0); }
+{
+  const source = join(root, "native/opscode-pair-qr/main.swift");
+  const binary = join(root, "dist/native/opscode-pair-qr");
+  mkdirSync(join(root, "dist/native"), { recursive: true });
+  if (!existsSync(binary) || statSync(binary).mtimeMs < statSync(source).mtimeMs) {
+    try {
+      execFileSync("xcrun", ["swiftc", "-O", "-target", "arm64-apple-macos13.0", source, "-o", binary], { stdio: "inherit" });
+      console.log("native: built dist/native/opscode-pair-qr");
+    } catch (error) {
+      console.warn(`native: phone pairing QR helper unavailable (${error.message})`);
+    }
+  }
+}
 // opscode-voice: microphone + Apple's on-device speech recognition (native/opscode-voice/main.swift).
 {
   const vsrc = join(root, "native/opscode-voice/main.swift");
@@ -20,6 +33,23 @@ if (process.platform !== "darwin") { console.log("native: skipped (not macOS)");
     } catch (e) {
       // Not fatal: the mic button then says voice input is unavailable.
       console.warn(`native: opscode-voice not built (${e.message}); voice input will be unavailable`);
+    }
+  }
+}
+// opscode-hands: computer use through Accessibility (native/opscode-hands/main.swift). The test app beside it is built by its test only.
+{
+  const hsrc = join(root, "native/opscode-hands/main.swift");
+  const hout = join(root, "dist/native/opscode-hands");
+  mkdirSync(join(root, "dist/native"), { recursive: true });
+  if (existsSync(hout) && statSync(hout).mtimeMs > statSync(hsrc).mtimeMs) console.log("native: opscode-hands up to date");
+  else {
+    try {
+      execFileSync("xcrun", ["swiftc", "-O", "-swift-version", "5", "-target", "arm64-apple-macos13.0", hsrc, "-o", hout], { stdio: "inherit" });
+      execFileSync("codesign", ["--force", "--sign", "-", hout], { stdio: "inherit" });
+      console.log("native: built dist/native/opscode-hands");
+    } catch (e) {
+      // Not fatal: computer use then falls back to screenshots and clicks by position.
+      console.warn(`native: opscode-hands not built (${e.message}); computer use falls back to screenshots`);
     }
   }
 }

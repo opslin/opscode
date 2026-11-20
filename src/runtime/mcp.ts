@@ -11,6 +11,7 @@ import type { McpServerInfo, McpState } from "../shared/protocol";
 import { validateBaseUrl } from "./agent/llm";
 import { ensurePrivateDir, readJson, writeJsonAtomic } from "./jsonFile";
 import { isRecord } from "./rpc";
+import { McpOAuth, SignInRequired, OAuthFailed } from "./mcpOAuth";
 
 const PROTOCOL = "2024-11-05";
 const LIST_TIMEOUT_MS = 20_000;
@@ -39,6 +40,12 @@ interface Config {
   headers?: Record<string, string>;
   source?: string;
   catalog?: string;
+  /** The URL itself is a secret (it carries the person's key): never shown in lists. */
+  secret_url?: boolean;
+  /** The server sits behind a browser sign-in (OAuth). Set from the catalog, or when the server first answers 401 with sign-in settings. */
+  oauth?: boolean;
+  /** Scopes to ask for instead of the ones the server advertises. */
+  oauth_scope?: string;
 }
 
 const strMap = (v: unknown): Record<string, string> | undefined =>
@@ -56,6 +63,8 @@ export function checkSecrets(env?: Record<string, string>, headers?: Record<stri
     if (v.length > 4096 || /[\0\r\n]/.test(v)) throw new Error(`the value for ${k} is not valid`);
   }
 }
+/** "https://host/…": enough to see where it goes, nothing of the key. */
+export const maskUrl = (u: string): string => { try { return `${new URL(u).origin}/…`; } catch { return "…"; } };
 const NEEDS_KEY = /\b(401|403)\b|unauthori[sz]ed|forbidden|auth(entication|orization)? (required|failed)|invalid (api )?(key|token)|missing (api )?(key|token)|access token|api key/i;
 
 /** Finds a bare program name (npx, uvx…) also in the usual install places an app launched from the Dock doesn't see. */
@@ -254,13 +263,20 @@ class StdioClient implements Client {
 
 // ---- HTTP (streamable) --------------------------------------------------------
 
+/** Where an HTTP client gets its sign-in token from, and how it asks for a fresh one. */
+interface HttpAuth {
+  token(): Promise<string | undefined>;
+  /** The server refused our token: a new one, or undefined when the person has to sign in again. */
+  renew(): Promise<string | undefined>;
+}
+
 class HttpClient implements Client {
   private session: string | undefined;
   private nextId = 1;
-  constructor(private readonly url: string, private readonly extraHeaders: Record<string, string> = {}) {}
+  constructor(private readonly url: string, private readonly extraHeaders: Record<string, string> = {}, private readonly auth?: HttpAuth) {}
 
-  static async start(url: string, headers?: Record<string, string>): Promise<HttpClient> {
-    const c = new HttpClient(url, headers);
+  static async start(url: string, headers?: Record<string, string>, auth?: HttpAuth): Promise<HttpClient> {
+    const c = new HttpClient(url, headers, auth);
     await c.rpc("initialize", { protocolVersion: PROTOCOL, capabilities: {}, clientInfo: { name: "opscode", version: "0.0.1" } }, LIST_TIMEOUT_MS);
     await c.rpc("notifications/initialized", undefined, LIST_TIMEOUT_MS, true);
     return c;
@@ -272,15 +288,26 @@ class HttpClient implements Client {
     const timer = setTimeout(() => ctl.abort(), timeoutMs);
     signal?.addEventListener("abort", () => ctl.abort(), { once: true });
     try {
-      const res = await fetch(this.url, {
-        method: "POST",
-        headers: { ...this.extraHeaders, "content-type": "application/json", accept: "application/json, text/event-stream", ...(this.session ? { "mcp-session-id": this.session } : {}) },
-        body: JSON.stringify({ jsonrpc: "2.0", ...(id !== undefined ? { id } : {}), method, ...(params !== undefined ? { params } : {}) }),
-        signal: ctl.signal,
-        redirect: "error",
-      });
+      // A key the person typed (an Authorization header) wins over a sign-in.
+      const hasOwnAuth = Object.keys(this.extraHeaders).some((k) => k.toLowerCase() === "authorization");
+      let bearer = this.auth && !hasOwnAuth ? await this.auth.token() : undefined;
+      let res!: Response;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        res = await fetch(this.url, {
+          method: "POST",
+          headers: { ...this.extraHeaders, ...(bearer ? { authorization: `Bearer ${bearer}` } : {}), "content-type": "application/json", accept: "application/json, text/event-stream", ...(this.session ? { "mcp-session-id": this.session } : {}) },
+          body: JSON.stringify({ jsonrpc: "2.0", ...(id !== undefined ? { id } : {}), method, ...(params !== undefined ? { params } : {}) }),
+          signal: ctl.signal,
+          redirect: "error",
+        });
+        if (res.status !== 401 || attempt === 1 || !this.auth || hasOwnAuth) break;
+        // The token ran out early or was revoked: one refresh, then the same call again.
+        bearer = bearer ? await this.auth.renew() : undefined;
+        if (!bearer) break;
+      }
       const sid = res.headers.get("mcp-session-id");
       if (sid) this.session = sid;
+      if (res.status === 401 && !hasOwnAuth) throw new SignInRequired(res.headers.get("www-authenticate") ?? undefined);
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       if (notification) return undefined;
       const type = res.headers.get("content-type") ?? "";
@@ -321,11 +348,16 @@ class HttpClient implements Client {
 interface Live {
   state: McpState;
   error?: string;
+  /** The last failure was "sign in first" (not a missing key). */
+  signin?: boolean;
+  /** The server's own WWW-Authenticate answer, kept so the sign-in starts from what it said. */
+  www?: string;
   tools: McpTool[];
   client?: Client;
   connecting?: Promise<void>;
 }
 
+const hasAuthHeader = (h?: Record<string, string>): boolean => !!h && Object.keys(h).some((k) => k.toLowerCase() === "authorization");
 const slug = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 24) || "server";
 
 export class McpManager {
@@ -334,10 +366,20 @@ export class McpManager {
   private external: Config[] = [];
   private readonly live = new Map<string, Live>();
 
-  constructor(stateDir: string, private readonly cwd: string, private readonly onChange: () => void) {
+  readonly oauth: McpOAuth;
+
+  constructor(stateDir: string, private readonly cwd: string, private readonly onChange: () => void, onSignIn: (id: string, ok: boolean, error?: string) => void = () => {}, log: (line: string) => void = () => {}) {
     ensurePrivateDir(stateDir);
     this.file = join(stateDir, "mcp.json");
     this.configs = this.load();
+    this.oauth = new McpOAuth(stateDir, {
+      log,
+      done: (id, ok, error) => {
+        onSignIn(id, ok, error);
+        if (ok && this.has(id)) void this.connect(id);
+        else this.onChange();
+      },
+    });
   }
 
   private load(): Config[] {
@@ -346,7 +388,7 @@ export class McpManager {
     const out: Config[] = [];
     for (const c of raw) {
       if (!isRecord(c) || typeof c.id !== "string" || typeof c.name !== "string" || typeof c.enabled !== "boolean") continue;
-      const extra = { ...(strMap(c.env) ? { env: strMap(c.env) } : {}), ...(strMap(c.headers) ? { headers: strMap(c.headers) } : {}), ...(typeof c.source === "string" ? { source: c.source } : {}), ...(typeof c.catalog === "string" ? { catalog: c.catalog } : {}) };
+      const extra = { ...(strMap(c.env) ? { env: strMap(c.env) } : {}), ...(strMap(c.headers) ? { headers: strMap(c.headers) } : {}), ...(typeof c.source === "string" ? { source: c.source } : {}), ...(typeof c.catalog === "string" ? { catalog: c.catalog } : {}), ...(c.secret_url === true ? { secret_url: true } : {}), ...(c.oauth === true ? { oauth: true } : {}), ...(typeof c.oauth_scope === "string" ? { oauth_scope: c.oauth_scope } : {}) };
       if (c.transport === "stdio" && typeof c.command === "string" && Array.isArray(c.args) && c.args.every((a) => typeof a === "string")) {
         out.push({ id: c.id, name: c.name, transport: "stdio", command: c.command, args: c.args as string[], enabled: c.enabled, ...extra });
       } else if (c.transport === "http" && typeof c.url === "string") out.push({ id: c.id, name: c.name, transport: "http", url: c.url, enabled: c.enabled, ...extra });
@@ -383,12 +425,13 @@ export class McpManager {
         id: c.id,
         name: c.name,
         transport: c.transport,
-        target: c.transport === "stdio" ? [c.command, ...(c.args ?? [])].join(" ") : (c.url ?? ""),
+        target: c.transport === "stdio" ? [c.command, ...(c.args ?? [])].join(" ") : c.secret_url ? maskUrl(c.url ?? "") : (c.url ?? ""),
         enabled: c.enabled,
         ...(c.plugin ? { plugin: c.plugin } : {}),
         state: c.enabled ? (l?.state ?? "off") : "off",
         ...(l?.error ? { error: l.error } : {}),
-        ...(l?.error && NEEDS_KEY.test(l.error) ? { needs_key: true } : {}),
+        ...(l?.error && NEEDS_KEY.test(l.error) && !l.signin ? { needs_key: true } : {}),
+        ...(c.oauth && c.transport === "http" ? { auth: "oauth" as const, ...this.oauth.status(c.id, c.url), ...(l?.signin && !this.oauth.status(c.id, c.url).signing_in ? { needs_signin: true } : {}) } : {}),
         ...(c.env || c.headers ? { secrets: [...Object.keys(c.env ?? {}), ...Object.keys(c.headers ?? {})] } : {}),
         ...(c.source ? { source: c.source } : {}),
         ...(c.catalog ? { catalog: c.catalog } : {}),
@@ -419,11 +462,11 @@ export class McpManager {
   }
 
   /** Adds a server from structured fields (no command-line parsing). */
-  addServer(spec: { name: string; command?: string; args?: string[]; url?: string; enabled: boolean; env?: Record<string, string>; headers?: Record<string, string>; source?: string; catalog?: string }): McpServerInfo {
+  addServer(spec: { name: string; command?: string; args?: string[]; url?: string; enabled: boolean; env?: Record<string, string>; headers?: Record<string, string>; source?: string; catalog?: string; secret_url?: boolean; oauth?: boolean; oauth_scope?: string }): McpServerInfo {
     if (this.configs.length >= MAX_SERVERS) throw new Error(`at most ${MAX_SERVERS} servers`);
     checkSecrets(spec.env, spec.headers);
     const name = spec.name.trim().slice(0, 60) || "server";
-    const extra = { ...(spec.env && Object.keys(spec.env).length ? { env: spec.env } : {}), ...(spec.headers && Object.keys(spec.headers).length ? { headers: spec.headers } : {}), ...(spec.source ? { source: spec.source } : {}), ...(spec.catalog ? { catalog: spec.catalog } : {}) };
+    const extra = { ...(spec.env && Object.keys(spec.env).length ? { env: spec.env } : {}), ...(spec.headers && Object.keys(spec.headers).length ? { headers: spec.headers } : {}), ...(spec.source ? { source: spec.source } : {}), ...(spec.catalog ? { catalog: spec.catalog } : {}), ...(spec.secret_url ? { secret_url: true } : {}), ...(spec.oauth && spec.url ? { oauth: true } : {}), ...(spec.oauth_scope ? { oauth_scope: spec.oauth_scope.slice(0, 2000) } : {}) };
     let cfg: Config;
     if (spec.url) cfg = { id: randomUUID(), name, transport: "http", url: validateBaseUrl(spec.url), enabled: spec.enabled, ...extra };
     else if (spec.command) cfg = { id: randomUUID(), name, transport: "stdio", command: spec.command, args: spec.args ?? [], enabled: spec.enabled, ...extra };
@@ -436,11 +479,12 @@ export class McpManager {
   }
 
   /** Replaces a server's keys (values given) and reconnects it. Names not given are left as they are. */
-  setSecrets(id: string, patch: { env?: Record<string, string>; headers?: Record<string, string> }): boolean {
+  setSecrets(id: string, patch: { env?: Record<string, string>; headers?: Record<string, string>; url?: string }): boolean {
     if (this.external.some((c) => c.id === id)) throw new Error("this server comes from a plugin");
     const c = this.configs.find((x) => x.id === id);
     if (!c) return false;
     checkSecrets(patch.env, patch.headers);
+    if (patch.url && c.secret_url) c.url = validateBaseUrl(patch.url);
     if (patch.env) c.env = { ...(c.env ?? {}), ...patch.env };
     if (patch.headers) c.headers = { ...(c.headers ?? {}), ...patch.headers };
     this.save();
@@ -455,6 +499,7 @@ export class McpManager {
     this.configs.splice(i, 1);
     this.save();
     this.drop(id);
+    this.oauth.forget(id);
     this.onChange();
     return true;
   }
@@ -494,12 +539,27 @@ export class McpManager {
     this.onChange();
     l.connecting = (async () => {
       try {
-        l.client = c.transport === "stdio" ? await StdioClient.start(c.command!, c.args ?? [], this.cwd, c.env) : await HttpClient.start(c.url!, c.headers);
+        if (c.transport === "stdio") l.client = await StdioClient.start(c.command!, c.args ?? [], this.cwd, c.env);
+        else {
+          // A server known to need a sign-in that has none yet is not even called.
+          if (c.oauth && !this.oauth.has(c.id) && !hasAuthHeader(c.headers)) throw new SignInRequired();
+          l.client = await HttpClient.start(c.url!, c.headers, { token: () => this.oauth.accessToken(c.id, c.url!), renew: () => this.oauth.refresh(c.id) });
+        }
         l.tools = await l.client.listTools();
         l.state = "ready";
       } catch (e) {
         l.state = "error";
         l.error = e instanceof Error ? e.message : String(e);
+        if (e instanceof SignInRequired && c.transport === "http") {
+          // Sign-in settings in the 401 (or the catalog) mean a browser sign-in; otherwise it is a missing key.
+          const knows = c.oauth || /resource_metadata\s*=/i.test(e.www ?? "");
+          if (knows) {
+            l.signin = true;
+            l.www = e.www;
+            l.error = "Sign in to use this server.";
+            if (!c.oauth) { c.oauth = true; if (this.configs.includes(c)) this.save(); }
+          }
+        }
         l.client?.close();
         l.client = undefined;
       } finally {
@@ -510,22 +570,60 @@ export class McpManager {
     return l.connecting;
   }
 
+  // ---- browser sign-in -----------------------------------------------------------------------------------------------------
+
+  /** Starts the browser sign-in; returns the address to open. The server connects by itself when the person is done. */
+  async signIn(id: string): Promise<{ url: string }> {
+    const c = this.all().find((x) => x.id === id);
+    if (!c) throw new Error("no such server");
+    if (c.transport !== "http" || !c.url) throw new Error("only servers reached by a web address have a sign-in");
+    if (hasAuthHeader(c.headers)) throw new Error("this server already has a key; remove the key to sign in instead");
+    try {
+      const www = this.live.get(id)?.www;
+      const r = await this.oauth.start(id, c.url, { www, scope: c.oauth_scope });
+      if (!c.oauth) { c.oauth = true; if (this.configs.includes(c)) this.save(); }
+      this.onChange();
+      return r;
+    } catch (e) {
+      if (e instanceof OAuthFailed) throw new Error(e.message);
+      throw e;
+    }
+  }
+
+  signInCancel(id: string): boolean { const ok = this.oauth.cancel(id); if (ok) this.onChange(); return ok; }
+
+  signOut(id: string): boolean {
+    if (!this.has(id)) return false;
+    this.oauth.signOut(id);
+    const l = this.live.get(id);
+    l?.client?.close();
+    this.live.delete(id);
+    if (this.all().find((x) => x.id === id)?.enabled) void this.connect(id);
+    else this.onChange();
+    return true;
+  }
+
   /** Connects every enabled server that is not yet ready (bounded wait). */
   async ensureReady(maxMs = 8000): Promise<void> {
     const jobs = this.all().filter((c) => c.enabled && this.live.get(c.id)?.state !== "ready").map((c) => this.connect(c.id));
     if (jobs.length) await Promise.race([Promise.all(jobs), new Promise((r) => setTimeout(r, maxMs).unref())]);
   }
 
-  /** Tools of ready servers, with provider-safe unique names. */
-  agentTools(): { name: string; server: string; tool: McpTool }[] {
+  /**
+   * Tools of ready servers, with provider-safe unique names. `short` is for Claude Code and Codex, which see these tools
+   * behind Opscode's own server name (a 22-character prefix), so the name must stay short enough to fit the 64-character limit.
+   */
+  agentTools(short = false): { name: string; server: string; tool: McpTool }[] {
     const out: { name: string; server: string; tool: McpTool }[] = [];
     const used = new Set<string>();
+    const room = short ? 38 : 64;
     for (const c of this.all()) {
       const l = this.live.get(c.id);
       if (!c.enabled || l?.state !== "ready") continue;
       for (const t of l.tools) {
-        let name = `mcp__${slug(c.name)}__${t.name.replace(/[^a-zA-Z0-9_-]/g, "_")}`.slice(0, 64);
-        for (let n = 2; used.has(name); n++) name = `${name.slice(0, 60)}_${n}`;
+        const clean = t.name.replace(/[^a-zA-Z0-9_-]/g, "_");
+        let name = (short ? `${slug(c.name)}__${clean}` : `mcp__${slug(c.name)}__${clean}`).slice(0, room);
+        for (let n = 2; used.has(name); n++) name = `${name.slice(0, room - 4)}_${n}`;
         used.add(name);
         out.push({ name, server: c.id, tool: t });
       }
@@ -540,6 +638,7 @@ export class McpManager {
   }
 
   closeAll(): void {
+    this.oauth.closeAll();
     for (const id of [...this.live.keys()]) this.drop(id);
   }
 }

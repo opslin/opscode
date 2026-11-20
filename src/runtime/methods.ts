@@ -1,9 +1,10 @@
 // RPC method registry. Every method validates its params (unknown keys are
 // rejected), and every method except runtime.hello requires a completed hello.
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   PERMISSION_MODES,
+  ASK_LIMITS,
   ErrorCode,
   LIMITS,
   MIN_CLIENT_REVISION,
@@ -13,7 +14,7 @@ import {
   type Settings,
   type Workspace,
 } from "../shared/protocol";
-import { listDir, readFile, writeFile } from "./files";
+import { listDir, readFile, readFileChunk, writeFile } from "./files";
 import { BRANCH_RULES, type BranchRules } from "./engines/branchGuard";
 import { importPaths, saveBlob, thumbnail, voiceNotePath, LIMITS as ATTACH_LIMITS } from "./attachments";
 import { resolveExisting, rootOf } from "./paths";
@@ -46,6 +47,11 @@ import type { PluginStore } from "./plugins";
 import type { SkillSet } from "./skillset";
 import { ACCESS_LEVELS, AGENT_NAME, type AgentSet } from "./agentfiles";
 import { SKILL_NAME } from "./skills";
+import { PLATFORMS as LEAD_PLATFORMS, SIGNAL_TYPES as LEAD_SIGNALS } from "./leads/ontology";
+import { matchOffering } from "./leads/packs";
+import * as labMod from "./leads/lab";
+import { scoutWebsite, findChrome, renderPage, makeComplete, emptyScout } from "./leads/scout";
+import type { Complete } from "./leads/scout";
 import { alreadyHere, apply, scan as scanImports, type ImportItem } from "./importer";
 import { MODES, MODE_IDS } from "./chief/modes";
 import { STAGE_IDS } from "./chief/pipeline";
@@ -82,10 +88,13 @@ export interface MethodDeps {
   imageGen?: import("./imagegen").ImageGen;
   usage?: import("./usage").UsageService;
   library?: import("./library").LibraryService;
+  leads?: import("./leads").LeadsService;
   automations(): AutomationRunner;
   chief(): ChiefManager;
   mcp: McpManager;
   computer: { store: ComputerStore; driver: Driver | undefined };
+  /** Computer use through Accessibility (native opscode-hands), its learned replays, and whether it can read apps now. */
+  hands?: { hands: import("./hands").Hands | undefined; replays: import("./hands").ReplayStore; ready(force?: boolean): Promise<boolean>; askAccess(pane?: "accessibility" | "screen"): Promise<boolean>; known(ok: boolean): void; steps: Map<string, { step: import("./hands").Step; ok: boolean }[]>; act(p: Record<string, unknown>): void };
   devices(): import("./devices/bridge").DeviceBridge;
   voice: import("./voice").VoiceService;
   tts: import("./tts").TtsService;
@@ -290,10 +299,10 @@ export function buildMethods(deps: MethodDeps): Map<string, AnyMethod> {
   // ---- turns ----------------------------------------------------------------
   def(
     "turn.submit",
-    method(true, object({ workspace_id: id, chat_id: optional(id), text: str({ min: 1, max: LIMITS.TURN_TEXT_MAX_CHARS }), attachments: optional(list(str({ min: 1, max: 1024 }), ATTACH_LIMITS.PER_MESSAGE)) }), (p) => {
+    method(true, object({ workspace_id: id, chat_id: optional(id), text: str({ min: 1, max: LIMITS.TURN_TEXT_MAX_CHARS }), attachments: optional(list(str({ min: 1, max: 1024 }), ATTACH_LIMITS.PER_MESSAGE)), request_id: optional(str({ min: 1, max: 128 })) }), (p) => {
       workspaceOr404(p.workspace_id);
       if (!p.text.trim()) throw fail.invalid("text must not be blank");
-      return deps.turns.submit(p.workspace_id, p.chat_id, p.text, p.attachments?.length ? { attachments: p.attachments } : {});
+      return deps.turns.submit(p.workspace_id, p.chat_id, p.text, { ...(p.attachments?.length ? { attachments: p.attachments } : {}), ...(p.request_id ? { requestId: p.request_id } : {}) });
     }),
   );
   // A Conductor's own chat runs in a private home folder (id "chief:<id>"); attachments for it live there.
@@ -318,9 +327,23 @@ export function buildMethods(deps: MethodDeps): Map<string, AnyMethod> {
     "attachment.thumb",
     method(true, object({ workspace_id: id, path: str({ min: 1, max: 1024 }) }), (p) => ({ data_url: thumbnail(attachRootOf(p.workspace_id), p.path) ?? null })),
   );
+  def("attachment.download_chunk", method(true, object({
+    workspace_id: id, path: str({ min: 1, max: 1024 }), offset: int(0, 10 * 1024 * 1024),
+    limit: int(0, 36 * 1024), revision: optional(str({ min: 1, max: 128 })),
+  }), (p) => readFileChunk(attachRootOf(p.workspace_id), p.path, p.offset, p.limit, p.revision)));
   def(
     "turn.approve",
-    method(true, object({ turn_id: id, call_id: id, allow: bool, remember: optional(oneOf("allow", "current")) }), (p) => deps.turns.approve(p.turn_id, p.call_id, p.allow, p.remember)),
+    method(true, object({ turn_id: id, call_id: id, allow: bool, remember: optional(oneOf("allow", "current")), choice: optional(str({ min: 1, max: 32 })) }), (p) => deps.turns.approve(p.turn_id, p.call_id, p.allow, p.remember, p.choice)),
+  );
+  // The person's answer to a question card (an agent asked to choose): answers per question, or skip.
+  const answerCheck = object({ id: str({ min: 1, max: 64 }), picks: list(str({ min: 1, max: ASK_LIMITS.LABEL }), ASK_LIMITS.OPTIONS), other: optional(str({ max: ASK_LIMITS.OTHER })) });
+  def(
+    "turn.answer",
+    method(true, object({ turn_id: id, call_id: id, answers: optional(list((v, key) => {
+      const r = answerCheck(v);
+      return r.ok ? r : { ok: false as const, message: `${key}: ${r.message}` };
+    }, ASK_LIMITS.QUESTIONS)), skip: optional(bool) }), (p) =>
+      deps.turns.answer(p.turn_id, p.call_id, p.answers?.map((a) => ({ id: a.id, picks: a.picks, ...(a.other !== undefined ? { other: a.other } : {}) })), p.skip === true)),
   );
   // The project's rule for new git branches: ask (default), stay on the current branch, or allow new ones.
   def("branch.rule", method(true, object({ workspace_id: id }), (p) => { workspaceOr404(p.workspace_id); return { rule: deps.branches.get(p.workspace_id) }; }));
@@ -329,8 +352,14 @@ export function buildMethods(deps: MethodDeps): Map<string, AnyMethod> {
     "turn.interrupt",
     method(true, object({ turn_id: id }), (p) => deps.turns.interrupt(p.turn_id)),
   );
-  // Voice input (Apple's on-device speech recognition). Events come as `voice.event` { session, ev, ... }.
+  // Local microphone transcription. Events come as `voice.event` { session, ev, ... }.
   def("voice.status", method(true, object({}), () => deps.voice.status()));
+  def("voice.install", method(true, object({}), () => {
+    try { return deps.voice.install(); } catch (e) { throw fail.conflict(e instanceof Error ? e.message : String(e)); }
+  }));
+  def("voice.remove", method(true, object({}), () => {
+    try { return deps.voice.remove(); } catch (e) { throw fail.conflict(e instanceof Error ? e.message : String(e)); }
+  }));
   def("voice.locales", method(true, object({}), () => deps.voice.locales()));
   def(
     "voice.start",
@@ -348,7 +377,7 @@ export function buildMethods(deps: MethodDeps): Map<string, AnyMethod> {
     }),
   );
   def("voice.stop", method(true, object({ cancel: optional(bool) }), (p) => deps.voice.stop(p.cancel === true)));
-  // Dictation where the window captures the microphone (Windows): 16 kHz Int16 chunks, base64 (100 ms = 4.3 kB).
+  // Dictation audio from the window: 16 kHz Int16 chunks, base64 (100 ms = 4.3 kB).
   def("voice.audio", method(true, object({ session: id, pcm: str({ max: 65536 }) }), (p) => ({ ok: deps.voice.audio(p.session, p.pcm) })));
   // Voice mode: a front agent you talk to; it briefs the worker chat. Events come as `voiceagent.event` { session, ev, ... }.
   const pick = optional(object({ engine: optional(str({ min: 1, max: 40 })), model: optional(str({ min: 1, max: 120 })), effort: optional(str({ min: 1, max: 40 })), account_id: optional(str({ min: 1, max: 40 })) }));
@@ -356,10 +385,14 @@ export function buildMethods(deps: MethodDeps): Map<string, AnyMethod> {
     try { return deps.voiceAgent().approve(p.session, p.call_id, p.allow); } catch (e) { throw fail.conflict(e instanceof Error ? e.message : String(e)); }
   }));
   def("voiceagent.status", method(true, object({}), () => deps.voiceAgent().status()));
+  // Mid-conversation: what the voice agent talks with, or what new workers run on ({} = the default).
+  def("voiceagent.pick", method(true, object({ session: id, brain: pick, worker: pick }), (p) => {
+    try { return deps.voiceAgent().pick(p.session, { ...(p.brain ? { brain: p.brain } : {}), ...(p.worker ? { worker: p.worker } : {}) }); } catch (e) { throw fail.conflict(e instanceof Error ? e.message : String(e)); }
+  }));
   def(
     "voiceagent.start",
-    method(true, object({ workspace_id: id, chat_id: optional(id), brain: pick, worker: optional(object({ engine: optional(str({ min: 1, max: 40 })), model: optional(str({ min: 1, max: 120 })), effort: optional(str({ min: 1, max: 40 })), account_id: optional(str({ min: 1, max: 40 })), mode: optional(oneOf(...PERMISSION_MODES)) })) }), async (p) => {
-      workspaceOr404(p.workspace_id);
+    method(true, object({ workspace_id: optional(id), chat_id: optional(id), brain: pick, worker: optional(object({ engine: optional(str({ min: 1, max: 40 })), model: optional(str({ min: 1, max: 120 })), effort: optional(str({ min: 1, max: 40 })), account_id: optional(str({ min: 1, max: 40 })), mode: optional(oneOf(...PERMISSION_MODES)) })) }), async (p) => {
+      if (p.workspace_id) workspaceOr404(p.workspace_id);
       try { return await deps.voiceAgent().start(p); } catch (e) { throw fail.conflict(e instanceof Error ? e.message : String(e)); }
     }),
   );
@@ -370,14 +403,18 @@ export function buildMethods(deps: MethodDeps): Map<string, AnyMethod> {
   def("voiceagent.attach", method(true, object({ session: id, paths: list(str({ min: 1, max: 4096 }), 50) }), (p) => { try { deps.voiceAgent().attach(p.session, p.paths); } catch (e) { throw fail.conflict(e instanceof Error ? e.message : String(e)); } return { ok: true }; }));
   def("voiceagent.say", method(true, object({ session: id, text: str({ min: 1, max: 4000 }) }), (p) => { try { deps.voiceAgent().say(p.session, p.text); } catch (e) { throw fail.conflict(e instanceof Error ? e.message : String(e)); } return { ok: true }; }));
   def("voiceagent.stop", method(true, object({ session: id }), (p) => deps.voiceAgent().stop(p.session)));
-  // Read aloud (Pocket TTS on this Mac). Audio and install progress come as `tts.event`.
+  // Read aloud with Kitten on this computer. Audio and install progress come as `tts.event`.
   def("tts.status", method(true, object({}), () => deps.tts.status()));
-  def("tts.install", method(true, object({}), () => deps.tts.install()));
-  def("tts.remove", method(true, object({}), () => deps.tts.remove()));
+  def("tts.install", method(true, object({}), () => {
+    try { return deps.tts.install(); } catch (e) { throw fail.conflict(e instanceof Error ? e.message : String(e)); }
+  }));
+  def("tts.remove", method(true, object({}), () => {
+    try { return deps.tts.remove(); } catch (e) { throw fail.conflict(e instanceof Error ? e.message : String(e)); }
+  }));
   def(
     "tts.speak",
     method(true, object({ text: str({ max: 200_000 }), voice: optional(str({ min: 1, max: 40 })) }), (p) => {
-      try { return deps.tts.speak({ text: p.text, voice: p.voice ?? deps.settings.get().tts_voice }); } catch (e) { throw fail.conflict(e instanceof Error ? e.message : String(e)); }
+      try { return deps.tts.speak({ text: p.text, voice: p.voice ?? deps.settings.get().tts_voice, language: p.voice ? undefined : deps.settings.get().tts_locale }); } catch (e) { throw fail.conflict(e instanceof Error ? e.message : String(e)); }
     }),
   );
   def("tts.progress", method(true, object({ session: id, played: int(0, 100000) }), (p) => { deps.tts.progress(p.session, p.played); return { ok: true }; }));
@@ -403,7 +440,9 @@ export function buildMethods(deps: MethodDeps): Map<string, AnyMethod> {
         workspaceOr404(p.workspace_id as string);
         chat = deps.chats.latest(p.workspace_id as string);
       }
-      return { chat_id: chat?.id ?? null, messages: chat ? deps.turns.history(chat.id) : [] };
+      return { chat_id: chat?.id ?? null, messages: chat ? deps.turns.history(chat.id) : [],
+        ...(chat ? { settings: { title: chat.title, mode: chat.mode, engine: chat.engine ?? "api",
+          model: chat.model, effort: chat.effort } } : {}) };
     }),
   );
 
@@ -421,11 +460,30 @@ export function buildMethods(deps: MethodDeps): Map<string, AnyMethod> {
   const effort = oneOf(...EFFORTS);
   def(
     "chat.create",
-    method(true, object({ workspace_id: id, mode: optional(mode), engine: optional(engineId), model: optional(str({ min: 1, max: 120 })), effort: optional(effort), account_id: optional(str({ min: 1, max: 40 })) }), (p) => {
+    method(true, object({ workspace_id: id, mode: optional(mode), engine: optional(engineId), model: optional(str({ min: 1, max: 120 })), effort: optional(effort), account_id: optional(str({ min: 1, max: 40 })), request_id: optional(str({ min: 1, max: 128 })) }), (p) => {
       workspaceOr404(p.workspace_id);
-      let chat = guardNote(() => deps.chats.create(p.workspace_id, p.mode ?? deps.settings.get().default_mode));
       const d = deps.engines.store.settings();
       const engine = p.engine ?? d.default_engine;
+      const creationHash = p.request_id ? createHash("sha256").update(JSON.stringify([p.workspace_id, p.mode ?? null, p.engine ?? null, p.model ?? null, p.effort ?? null, p.account_id ?? null])).digest("hex") : undefined;
+      if (p.request_id) {
+        const existing = deps.chats.list(p.workspace_id).find((c) => c.creation_request_id === p.request_id);
+        if (existing) {
+          if (existing.creation_request_hash !== creationHash) throw fail.conflict("This request was already used for different chat settings.");
+          return { chat: existing };
+        }
+        if (p.account_id && engine !== "api" && !deps.engines.accounts?.find(engine, p.account_id)) throw fail.invalid("that account does not exist");
+        const initialPick = engine !== "api" || p.model || p.effort ? {
+          engine, model: p.model ?? (p.engine ? undefined : d.default_model || undefined),
+          effort: p.effort ?? (p.engine ? undefined : d.default_effort || undefined),
+        } : {};
+        const chat = guardNote(() => deps.chats.create(p.workspace_id, p.mode ?? deps.settings.get().default_mode, {
+          ...initialPick, ...(p.account_id && engine !== "api" ? { accounts: { [engine]: p.account_id } } : {}),
+          creation_request_id: p.request_id, creation_request_hash: creationHash,
+        }));
+        chatsChanged();
+        return { chat };
+      }
+      let chat = guardNote(() => deps.chats.create(p.workspace_id, p.mode ?? deps.settings.get().default_mode));
       if (engine !== "api" || p.model || p.effort) chat = deps.chats.setEngine(chat.id, { engine, model: p.model ?? (p.engine ? undefined : d.default_model || undefined), effort: p.effort ?? (p.engine ? undefined : d.default_effort || undefined) }) ?? chat;
       // The account this chat starts on (otherwise the one new chats use, pinned on its first message).
       if (p.account_id && engine !== "api") {
@@ -648,7 +706,7 @@ export function buildMethods(deps: MethodDeps): Map<string, AnyMethod> {
       : { ok: false, message: `${key} must be an object of up to 16 text values` };
   def("mcp.catalog", method(true, object({}), () => {
     const have = new Set(deps.mcp.list().map((x) => x.catalog).filter(Boolean));
-    return { catalog: MCP_CATALOG.map((e) => ({ id: e.id, name: e.name, description: e.description, mark: e.mark, transport: e.transport, target: e.transport === "stdio" ? [e.command, ...(e.args ?? [])].join(" ") : e.url, inputs: e.inputs.map(({ key, label, help }) => ({ key, label, help })), needs: e.needs ?? null, docs: e.docs, added: have.has(e.id) })) };
+    return { catalog: MCP_CATALOG.map((e) => ({ id: e.id, name: e.name, description: e.description, mark: e.mark, logo: e.logo, transport: e.transport, target: e.transport === "stdio" ? [e.command, ...(e.args ?? [])].join(" ") : e.urlInput ? "your own server address (from the service)" : e.url, inputs: e.inputs.map(({ key, label, help, optional }) => ({ key, label, help, optional: optional === true })), url_input: e.urlInput ?? null, note: e.note ?? null, needs: e.needs ?? null, docs: e.docs, added: have.has(e.id), category: e.category, featured: e.featured === true, auth: e.auth ?? null, unavailable: e.unavailable ?? null })) };
   }));
   def(
     "mcp.catalog.add",
@@ -656,8 +714,9 @@ export function buildMethods(deps: MethodDeps): Map<string, AnyMethod> {
       const entry = MCP_CATALOG.find((e) => e.id === p.id);
       if (!entry) throw fail.notFound("no such catalog entry");
       if (deps.mcp.list().some((x) => x.catalog === entry.id)) throw fail.conflict(`${entry.name} is already added`);
+      if (entry.unavailable) throw fail.conflict(entry.unavailable);
       const keys = guardNote(() => catalogSecrets(entry, p.values ?? {}));
-      const server = guardNote(() => deps.mcp.addServer({ name: entry.name, ...(entry.transport === "stdio" ? { command: entry.command, args: entry.args } : { url: entry.url }), enabled: true, catalog: entry.id, ...keys }));
+      const server = guardNote(() => deps.mcp.addServer({ name: entry.name, ...(entry.transport === "stdio" ? { command: entry.command, args: entry.args } : { url: keys.url ?? entry.url }), ...(keys.url ? { secret_url: true } : {}), enabled: true, catalog: entry.id, ...(entry.auth === "oauth" ? { oauth: true, ...(entry.oauthScope ? { oauth_scope: entry.oauthScope } : {}) } : {}), ...(keys.env ? { env: keys.env } : {}), ...(keys.headers ? { headers: keys.headers } : {}) }));
       return { server };
     }),
   );
@@ -669,6 +728,22 @@ export function buildMethods(deps: MethodDeps): Map<string, AnyMethod> {
       const entry = server.catalog ? MCP_CATALOG.find((e) => e.id === server.catalog) : undefined;
       const patch = entry ? guardNote(() => catalogSecrets(entry, p.values)) : server.transport === "http" ? { headers: p.values } : { env: p.values };
       if (!guardNote(() => deps.mcp.setSecrets(p.id, patch))) throw fail.notFound("no such server");
+      return { servers: deps.mcp.list() };
+    }),
+  );
+  // Browser sign-in for servers behind a login. start returns the address to open; the end comes as the mcp.oauth.done event.
+  def(
+    "mcp.oauth.start",
+    method(true, object({ id }), async (p) => {
+      if (!deps.mcp.has(p.id)) throw fail.notFound("no such server");
+      try { return await deps.mcp.signIn(p.id); } catch (e) { throw fail.conflict(e instanceof Error ? e.message : String(e)); }
+    }),
+  );
+  def("mcp.oauth.cancel", method(true, object({ id }), (p) => ({ cancelled: deps.mcp.signInCancel(p.id) })));
+  def(
+    "mcp.oauth.sign_out",
+    method(true, object({ id }), (p) => {
+      if (!deps.mcp.signOut(p.id)) throw fail.notFound("no such server");
       return { servers: deps.mcp.list() };
     }),
   );
@@ -1031,11 +1106,20 @@ export function buildMethods(deps: MethodDeps): Map<string, AnyMethod> {
   // ---- computer use ---------------------------------------------------------------
   const computerStatus = async (): Promise<unknown> => {
     const { store, driver } = deps.computer;
+    // Accessibility: ask the helper that actually clicks and types (it is what needs the permission; osascript is a different
+    // program and can say "no" while Opscode is allowed). The other program's answer is only the fallback.
+    const permissions = driver ? await driver.permissions() : { accessibility: null, screen_recording: null };
+    const hh = deps.hands?.hands;
+    if (hh && driver?.kind === "macos") {
+      const r = await hh.check();
+      if (r.ok && typeof r.accessibility === "boolean") { permissions.accessibility = r.accessibility; deps.hands?.known(r.accessibility); }
+      if (r.ok && typeof r.screen === "boolean") permissions.screen_recording = r.screen;
+    }
     return {
       supported: driver !== undefined,
       driver: driver?.kind ?? "none",
       enabled: store.enabled(),
-      permissions: driver ? await driver.permissions() : { accessibility: null, screen_recording: null },
+      permissions,
       rules: store.rules(),
       denied: DENIED_APP_NAMES,
     };
@@ -1085,6 +1169,57 @@ export function buildMethods(deps: MethodDeps): Map<string, AnyMethod> {
 
   const computerChanged = async (): Promise<void> => deps.broadcast({ method: "computer.changed", params: { status: await computerStatus() } });
   def("computer.status", method(true, object({}), async () => ({ status: await computerStatus() })));
+  // For the log and for support: which program was asked, and what each way of checking says.
+  def("computer.diagnose", method(true, object({}), async () => {
+    const H = await import("./hands");
+    const hh = deps.hands?.hands;
+    return { helper: hh ? H.handsBin() ?? null : null, hands: hh ? await hh.check() : null, jxa: deps.computer.driver ? (await deps.computer.driver.permissions()).accessibility : null };
+  }));
+  // Plain commands with no AI ("open chrome", "quit slack", "go to github.com"); handled false = not one of those.
+  def("computer.instant", method(true, object({ text: str({ min: 1, max: 300 }) }), async (p) => {
+    const H = await import("./hands");
+    const cmd = H.parseInstant(p.text);
+    if (!cmd) return { handled: false };
+    const h = deps.hands?.hands;
+    if (!h) return { handled: true, ok: false, say: "Computer use is not available on this computer." };
+    return { handled: true, ...(await H.runInstant(h, deps.computer.store, cmd)) };
+  }));
+  // "Do this on my Mac" (the notch's On my Mac box): a plain command now, else a task learned before, else a chat that does it
+  // with the computer_* tools. When that chat's turn worked, its plain steps are learned for next time.
+  def("computer.task", method(true, object({ text: str({ min: 1, max: 4000 }), workspace_id: optional(id) }), async (p) => {
+    const H = await import("./hands");
+    const h = deps.hands;
+    const cmd = H.parseInstant(p.text);
+    if (cmd && h?.hands) {
+      h.act({ source: "task", phase: "start", summary: cmd.say, app: cmd.target });
+      const r = await H.runInstant(h.hands, deps.computer.store, cmd);
+      h.act({ source: "task", phase: "end", ok: r.ok, app: cmd.target });
+      return { done: true, ok: r.ok, say: r.say, how: "instant" };
+    }
+    if (!deps.computer.store.enabled()) return { done: false, say: "Computer use is off. Turn it on in Settings → Computer use (opening apps works without it)." };
+    const learned = h?.hands ? h.replays.find(p.text) : undefined;
+    if (learned && h?.hands && (await h.ready())) {
+      const r = await H.runReplay(h.hands, deps.computer.store, learned, (what) => h.act({ source: "task", phase: "start", summary: what }));
+      h.act({ source: "task", phase: "end", ok: r.ok });
+      if (r.ok) { h.replays.used(learned.phrase); return { done: true, ok: true, say: "Done (a task it learned before).", how: "replay" }; }
+    }
+    // The model does it, in a chat of its own (visible in the notch with its live steps and a Stop button).
+    const ws = p.workspace_id ? deps.workspaces.get(p.workspace_id) : deps.workspaces.list().map((w) => ({ w, t: Math.max(0, ...deps.chats.list(w.id).map((c) => Date.parse(c.updated_at) || 0)) })).sort((a, b) => b.t - a.t)[0]?.w;
+    if (!ws) throw fail.invalid("Add a project in Opscode first (a chat needs one).");
+    const chat = deps.chats.create(ws.id, "auto");
+    deps.broadcast({ method: "chat.changed", params: { chats: deps.chats.list() } });
+    const r = deps.turns.submit(ws.id, chat.id, `${p.text}\n\n(Do this on my Mac with the computer_* tools. Say plainly what you did and whether you saw it work.)`);
+    h?.steps.set(chat.id, []);
+    void deps.turns.whenDone(r.turn_id).then((res) => {
+      const steps = h?.steps.get(chat.id) ?? [];
+      h?.steps.delete(chat.id);
+      if (res.status === "complete" && steps.length && h) h.replays.learn(p.text, steps);
+    });
+    return { done: false, chat_id: chat.id, turn_id: r.turn_id, how: "agent" };
+  }));
+  // Learned tasks (replayed with no AI).
+  def("computer.replays.list", method(true, object({}), () => ({ replays: deps.hands?.replays.list() ?? [] })));
+  def("computer.replays.forget", method(true, object({ phrase: str({ min: 1, max: 300 }) }), (p) => ({ forgot: deps.hands?.replays.forget(p.phrase) ?? false })));
   def(
     "computer.set_enabled",
     method(true, object({ enabled: bool }), async (p) => {
@@ -1145,6 +1280,19 @@ export function buildMethods(deps: MethodDeps): Map<string, AnyMethod> {
     }),
   );
   def(
+    "computer.request_access",
+    // Asks macOS for the Accessibility permission the standard way (its own prompt adds Opscode to the list), then opens the
+    // Accessibility page too, so the person only flips the switch.
+    method(true, object({ pane: optional(oneOf("accessibility", "screen")) }), async (p) => {
+      const h = deps.hands;
+      const pane = p.pane ?? "accessibility";
+      // Not working although it may show as ON: Opscode's old entry is replaced by a fresh one (see askAccess in index.ts).
+      let granted = h ? await h.askAccess(pane) : false;
+      if (!h && deps.computer.driver?.kind === "macos") await new Promise<void>((resolve) => execFile("/usr/bin/open", [PANES[pane] as string], () => resolve()));
+      return { granted, status: await computerStatus() };
+    }),
+  );
+  def(
     "computer.open_settings",
     method(true, object({ pane: oneOf("accessibility", "screen") }), async (p) => {
       if (deps.computer.driver?.kind !== "macos") return { opened: false };
@@ -1152,6 +1300,134 @@ export function buildMethods(deps: MethodDeps): Map<string, AnyMethod> {
       return { opened: true };
     }),
   );
+
+  // ---- leads (ontology store, packs, offerings) ---------------------------------------------------------------
+  const L = (): import("./leads").LeadsService => { if (!deps.leads) throw fail.invalid("lead intelligence is not available"); return deps.leads; };
+  const lead = <T,>(fn: () => T): T => {
+    try { return fn(); } catch (e) {
+      if (e instanceof RpcFailure) throw e;
+      const kind = (e as { kind?: string }).kind;
+      const msg = e instanceof Error ? e.message : String(e);
+      if (kind === "not_found") throw fail.notFound(msg);
+      if (kind === "conflict") throw fail.conflict(msg);
+      if (kind === "suppressed") throw fail.forbidden(msg);
+      throw fail.invalid(msg);
+    }
+  };
+  const anyObject: Check<Record<string, unknown>> = (v, key) => (isRecordLike(v) ? { ok: true, value: v } : { ok: false, message: `${key} must be an object` });
+  const isoDate = str({ min: 10, max: 40 });
+  const signalType = oneOf(...(Object.keys(LEAD_SIGNALS) as (keyof typeof LEAD_SIGNALS)[]));
+  const strList = (max: number, item: number): Check<string[]> => list(str({ min: 1, max: item }), max);
+  def("leads.pack.list", method(true, object({}), () => ({ packs: L().packs.list().map((p) => ({ id: p.id, name: p.name, version: p.version, description: p.description, builtin: p.builtin, need_types: p.need_types.length })), core_rubric: L().coreRubric() })));
+  def("leads.pack.get", method(true, object({ pack_id: id }), (p) => { const pack = L().packs.get(p.pack_id); if (!pack) throw fail.notFound("pack not found"); return { pack }; }));
+  def("leads.pack.install", method(true, object({ pack: anyObject }), (p) => ({ pack: lead(() => L().packs.install(p.pack)) })));
+  def("leads.offering.templates", method(true, object({}), () => ({ templates: L().templates() })));
+  def("leads.offering.list", method(true, object({}), () => ({ offerings: L().store.list("offerings") })));
+  def("leads.offering.save", method(true, object({ offering_id: optional(id), name: str({ min: 1, max: 100 }), summary: str({ min: 1, max: 2000 }), solves: strList(20, 80), proof: strList(20, 300), pricing_rules: str({ max: 1000 }), never_say: strList(20, 300), links: strList(20, 300) }), (p) => ({ offering: lead(() => L().store.saveOffering({ ...(p.offering_id ? { id: p.offering_id } : {}), name: p.name, summary: p.summary, solves: p.solves, proof: p.proof, pricing_rules: p.pricing_rules, never_say: p.never_say, links: p.links })) })));
+  def("leads.offering.match", method(true, object({ offering_id: id, pack_id: id }), (p) => lead(() => {
+    const o = L().store.get<import("./leads/ontology").Offering>("offerings", p.offering_id);
+    if (!o) throw fail.notFound("offering not found");
+    const pack = L().packs.get(p.pack_id);
+    if (!pack) throw fail.notFound("pack not found");
+    return matchOffering(o, pack);
+  })));
+  def("leads.org.upsert", method(true, object({ name: str({ min: 1, max: 200 }), domain: optional(str({ max: 300 })), hq_country: optional(str({ min: 2, max: 2 })), size_band: optional(str({ max: 20 })), industry_codes: optional(strList(10, 20)), definition: optional(str({ max: 80 })), description_short: optional(str({ max: 400 })), founded: optional(int(1800, 2100)) }), (p) => ({ organization: lead(() => L().store.upsertOrganization(p)) })));
+  def("leads.org.get", method(true, object({ org_id: id, as_of: optional(isoDate) }), (p) => lead(() => L().store.orgView(p.org_id, p.as_of ? new Date(p.as_of) : new Date()))));
+  def("leads.org.list", method(true, object({ limit: optional(int(1, 500)) }), (p) => ({ organizations: L().store.list<import("./leads/ontology").Organization>("organizations").slice(0, p.limit ?? 100) })));
+  def("leads.person.upsert", method(true, object({ org_id: id, name: str({ min: 1, max: 200 }), title_raw: str({ min: 1, max: 200 }), country: optional(str({ min: 2, max: 2 })), email: optional(str({ max: 320 })) }), (p) => lead(() => L().store.upsertPerson(p))));
+  def("leads.person.forget", method(true, object({ person_id: id }), (p) => lead(() => L().store.forgetPerson(p.person_id))));
+  def("leads.account.add", method(true, object({ person_id: optional(id), org_id: optional(id), platform: oneOf(...LEAD_PLATFORMS), handle: str({ min: 1, max: 200 }), url: optional(str({ max: 500 })), link_proof: str({ min: 1, max: 500 }) }), (p) => ({ account: lead(() => L().store.addAccount(p)) })));
+  def("leads.document.add", method(true, object({ platform: oneOf(...LEAD_PLATFORMS), url: str({ min: 8, max: 2000 }), text: str({ min: 1, max: 200_000 }), published_at: optional(isoDate), author_account_id: optional(id), language: optional(str({ max: 12 })) }), (p) => { const d = lead(() => L().store.addDocument(p)); return { document: { id: d.id, url: d.url, platform: d.platform, hash: d.hash, fetched_at: d.fetched_at } }; }));
+  def("leads.observe", method(true, object({ subject_type: oneOf("organization", "person"), subject_id: id, predicate: str({ min: 1, max: 100 }), object: str({ min: 1, max: 2000 }), evidence_quote: str({ min: 1, max: 600 }), url: str({ min: 8, max: 2000 }), document_id: optional(id), seen_at: optional(isoDate), valid_from: optional(isoDate), valid_to: optional(isoDate), confidence: num, extractor: str({ min: 1, max: 100 }) }), (p) => ({ observation: lead(() => L().store.observe(p)) })));
+  def("leads.signal.add", method(true, object({ org_id: id, type: signalType, observation_ids: list(id, 20), date: optional(isoDate), strength: optional(num) }), (p) => ({ signal: lead(() => L().store.addSignal(p)) })));
+  def("leads.need.upsert", method(true, object({ org_id: id, need_type: str({ min: 1, max: 80 }), description: str({ min: 1, max: 2000 }), status: optional(oneOf("open", "in_progress", "solved")), signal_ids: list(id, 40) }), (p) => ({ need: lead(() => L().store.upsertNeed(p)) })));
+  def("leads.suppress", method(true, object({ kind: oneOf("email", "domain", "person"), value: str({ min: 1, max: 320 }), reason: str({ max: 300 }) }), (p) => ({ suppression: lead(() => L().store.suppress(p.kind, p.value, p.reason)) })));
+  def("leads.stats", method(true, object({}), () => ({ counts: L().store.stats() })));
+  // ---- Lead LAB: the rubric, one lead's verdict, and the gold set that decides whether a judge may be trusted -----------------------------------------
+  const labJudge = (): { judge: import("./leads/lab").Judge; cfg: import("./agent/llm").LlmConfig } | undefined => {
+    const cfg = deps.providers.active();
+    return cfg ? { judge: labMod.modelJudge(`model:${cfg.model}`, cfg), cfg } : undefined;
+  };
+  const caseReq = object({ org_id: id, person_id: optional(id), need_type: optional(str({ min: 1, max: 80 })), pack_id: id, offering_id: id, geos: list(str({ min: 2, max: 2 }), 30) });
+  const buildLabCase = (p: { org_id: string; person_id?: string | undefined; need_type?: string | undefined; pack_id: string; offering_id: string; geos: string[] }) => {
+    const pack = L().packs.get(p.pack_id);
+    if (!pack) throw fail.notFound("pack not found");
+    const offering = L().store.get<import("./leads/ontology").Offering>("offerings", p.offering_id);
+    if (!offering) throw fail.notFound("offering not found");
+    return { pack, case: labMod.buildCase(L().store, { org_id: p.org_id, ...(p.person_id ? { person_id: p.person_id } : {}), ...(p.need_type ? { need_type: p.need_type } : {}), campaign: { geos: p.geos, pack, offering } }) };
+  };
+  def("leads.lab.criteria", method(true, object({ pack_id: optional(id) }), (p) => {
+    const pack = p.pack_id ? L().packs.get(p.pack_id) : undefined;
+    if (p.pack_id && !pack) throw fail.notFound("pack not found");
+    return { criteria: labMod.rubricFor(pack).map((c) => ({ id: c.id, text: c.text, origin: c.origin, requires: c.requires, how: c.rule && c.scope ? "rule first, then model" : c.scope ? "model" : "rule" })) };
+  }));
+  def("leads.lab.case", method(true, caseReq, (p) => ({ case: lead(() => buildLabCase(p).case) })));
+  def("leads.lab.evaluate", method(true, object({ org_id: id, person_id: optional(id), need_type: optional(str({ min: 1, max: 80 })), pack_id: id, offering_id: id, geos: list(str({ min: 2, max: 2 }), 30), use_model: optional(bool), audit_model: optional(str({ min: 1, max: 200 })), audit_rate: optional(num) }), async (p) => {
+    const built = lead(() => buildLabCase(p));
+    const notes: string[] = [];
+    const j = p.use_model === false ? undefined : labJudge();
+    if (p.use_model !== false && !j) notes.push("No model provider is configured, so the criteria that need a model were not run (the score is empty unless a rule already failed).");
+    const audit = j && p.audit_model && p.audit_rate ? { judge: labMod.modelJudge(`model:${p.audit_model}`, { ...j.cfg, model: p.audit_model }), rate: Math.min(1, Math.max(0, p.audit_rate)) } : undefined;
+    const verdict = await labMod.evaluateLead(built.case, { pack: built.pack, ...(j ? { judge: j.judge } : {}), ...(audit ? { audit } : {}) });
+    return { verdict, notes };
+  }));
+  def("leads.lab.gold", method(true, object({ dry_run: optional(bool), include_own: optional(bool), audit_model: optional(str({ min: 1, max: 200 })), audit_rate: optional(num), save: optional(bool) }), async (p) => {
+    const pack = L().packs.get("restaurants");
+    const extra = p.include_own === false ? { cases: [], skipped: [] as string[] } : L().extraGold();
+    const gold = [...labMod.GOLD, ...extra.cases];
+    // A dry run is free: it counts exactly how many model questions the rules leave open.
+    if (p.dry_run) {
+      let q = 0;
+      for (const g of gold) q += (await labMod.evaluateLead(g.case, { ...(pack ? { pack } : {}) })).criteria.filter((c) => c.how === "not_run").length;
+      return { dry_run: true, cases: gold.length, model_questions: q, skipped_files: extra.skipped };
+    }
+    const j = labJudge();
+    if (!j) throw fail.invalid("set up a model provider first: the gold run asks a model to judge each case");
+    const audit = p.audit_model && p.audit_rate ? { judge: labMod.modelJudge(`model:${p.audit_model}`, { ...j.cfg, model: p.audit_model }), rate: Math.min(1, Math.max(0, p.audit_rate)), seed: "gold" } : undefined;
+    const { report } = await labMod.evaluateGold(j.judge, gold, { ...(pack ? { pack } : {}), ...(audit ? { audit } : {}) });
+    const g = labMod.gate(report);
+    const md = labMod.renderMarkdown(report, g);
+    const saved = p.save === false ? undefined : L().saveReport(md, { report, gate: g });
+    return { report, gate: g, markdown: md, ...(saved ? { saved } : {}), skipped_files: extra.skipped };
+  }));
+  // One website scan at a time: the scout is polite per site, and a second run would double the load on the same machines.
+  let scouting = false;
+  def("leads.scout.website", method(true, object({ domains: list(str({ min: 1, max: 300 }), 20), pack_id: optional(id), max_pages: optional(int(1, 15)), delay_ms: optional(int(0, 10_000)), render: optional(bool), use_llm: optional(bool), max_llm_calls: optional(int(1, 30)) }), async (p) => {
+    const svc = L();
+    const pack = p.pack_id ? svc.packs.get(p.pack_id) : undefined;
+    if (p.pack_id && !pack) throw fail.notFound("pack not found");
+    if (scouting) throw fail.conflict("a website scan is already running");
+    scouting = true;
+    try {
+      // Tests point fake site names at local fixture servers with OPSCODE_LEADS_TEST_MAP='{"site.test":"127.0.0.1:PORT"}'; production leaves it unset.
+      let rewrite: ((u: URL) => URL) | undefined;
+      if (process.env.OPSCODE_LEADS_TEST_MAP) {
+        const map = JSON.parse(process.env.OPSCODE_LEADS_TEST_MAP) as Record<string, string>;
+        rewrite = (u) => { const to = map[u.hostname]; if (!to) return u; const n = new URL(u.href); n.host = to; n.protocol = "http:"; return n; };
+      }
+      const notes: string[] = [];
+      // A browser for pages that build their content with JavaScript: one already installed here, used only when the plain page looks empty.
+      const chrome = p.render === false ? undefined : findChrome();
+      if (p.render !== false && !chrome) notes.push("No Chrome, Chromium or Edge was found, so pages that need JavaScript are read without it.");
+      const proxyRewrite = process.env.OPSCODE_LEADS_TEST_MAP ? (host: string, port: number) => { const to = (JSON.parse(process.env.OPSCODE_LEADS_TEST_MAP!) as Record<string, string>)[host]; if (!to) return undefined; const [h, pt] = to.split(":"); return { host: h!, port: Number(pt ?? port) }; } : undefined;
+      // The model step costs money, so it is off unless asked for, and needs a configured provider.
+      let llm: { complete: Complete; maxCalls: number } | undefined;
+      if (p.use_llm && pack) {
+        const cfg = deps.providers.active();
+        if (cfg) llm = { complete: makeComplete(cfg), maxCalls: p.max_llm_calls ?? 6 };
+        else notes.push("No model provider is configured, so the model step was skipped.");
+      } else if (p.use_llm) notes.push("The model step needs an industry pack (pack_id).");
+      const reports = [];
+      for (let i = 0; i < p.domains.length; i++) {
+        const domain = p.domains[i]!;
+        deps.broadcast({ method: "leads.scout.progress", params: { index: i, total: p.domains.length, domain, state: "start" } });
+        const report = await scoutWebsite(svc.store, domain, pack, { ...(rewrite ? { rewrite } : {}), ...(chrome ? { render: (url: string) => renderPage(url, { chrome, ...(proxyRewrite ? { proxy: { rewrite: proxyRewrite } } : {}) }) } : {}), ...(llm ? { llm } : {}), ...(p.max_pages ? { maxPages: p.max_pages } : {}), ...(p.delay_ms !== undefined ? { delayMs: p.delay_ms, ...(p.delay_ms === 0 ? { maxDelayMs: 0 } : {}) } : {}) }).catch((e: unknown) => emptyScout(domain, e instanceof Error ? e.message : String(e)));
+        deps.broadcast({ method: "leads.scout.progress", params: { index: i, total: p.domains.length, domain, state: "done", status: report.status } });
+        reports.push(report);
+      }
+      return { reports, notes };
+    } finally { scouting = false; }
+  }));
 
   // ---- chief ----------------------------------------------------------------
   const chiefM = (): ChiefManager => deps.chief();

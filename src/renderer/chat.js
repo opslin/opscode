@@ -14,6 +14,7 @@ import { openModelPicker, engineMark, modelName, effortName, effortLevel } from 
 import { pixelBurst, pixelReveal, launchFx, endLaunch } from "./pixelfx.js";
 import { mountMessage, mountStage } from "./islands.js";
 import { attachmentTile, createAttachments, thumbLoader } from "./attach.js";
+import { createAskCard } from "./askcard.js";
 import { MODE_INFO, MODE_ORDER, modeCharacter, modeEmblem, crewTheme } from "./conductor.js";
 import { accountForChat, accountMenuItems, accountShort, accountTitle, accountsOf, avatar, planName, signedIn } from "./accounts.js";
 
@@ -93,9 +94,27 @@ export function createChat(workspace, opts = {}) {
     h("span", { class: "vl-bars", "aria-hidden": "true" }, ...Array.from({ length: 5 }, () => h("i"))),
     h("span", { class: "vl-label" }, "Voice mode"));
   let vox = null;
+  // The question card (an agent asks you to choose) sits on top of the message box while the work waits.
+  const askReopen = h("button", { class: "ask-reopen", type: "button", hidden: true, onclick: () => { askReopen.hidden = true; askCard.reopen(); } }, h("span", { class: "ask-dot" }), "Waiting for your answer · Open");
+  const askCard = createAskCard({
+    onAnswer: (card, answers) => answerCard(card, { answers }),
+    onSkip: (card) => answerCard(card, { skip: true }),
+    onHide: (keep) => { askReopen.hidden = !keep; },
+  });
+  async function answerCard(card, body) {
+    try {
+      const r = await state.client.call("turn.answer", { turn_id: card.turnId, call_id: card.callId, ...body });
+      if (!r.resolved) toast("That question is no longer open.");
+      // A question from a reply that already ended: the answer went in as the next message.
+      if (r.turn_id && r.text) { addUser(r.text, false, []); runningTurn = r.turn_id; ensureAssistant(r.turn_id); syncControls(); }
+      askReopen.hidden = true;
+    } catch (err) { toast(err.message); throw err; }
+  }
+  const showAsk = (turnId, part) => { if (part?.questions?.length) { askReopen.hidden = true; askCard.show({ turnId, callId: part.call_id, questions: part.questions }); } };
   const composer = h(
     "div",
     { class: "composer-wrap" },
+    askCard.el, askReopen,
     h("div", { class: "composer-top" }, crewSwitch, h("span", { class: "pane-grow" }), talkBtn),
     h("div", { class: "composer" }, attach.el, textarea,
       h("div", { class: "composer-controls" }, plusBtn, settingsBtn, modeBadge, h("span", { class: "pane-grow" }), accountChip, engineChip, effortChip, mic.timer, mic.el, send)),
@@ -352,7 +371,7 @@ export function createChat(workspace, opts = {}) {
     const running = runningTurn !== null;
     const hasInput = !!textarea.value.trim() || attach.count > 0;
     send.disabled = opts.chief ? !hasInput && !running : !running && !hasInput;
-    const stopping = running && !(opts.chief && hasInput);
+    const stopping = running && !(opts.chief && hasInput) && !(askCard.isOpen() && hasInput);
     send.replaceChildren(icon(stopping ? "stop" : "arrow-up", stopping ? "icon stop" : "icon"));
     send.setAttribute("aria-label", stopping ? "Stop" : "Send message");
   };
@@ -381,7 +400,7 @@ export function createChat(workspace, opts = {}) {
     const worked = h("div", { class: "msg-worked", hidden: true });
     const handoffEl = h("div", { class: "msg-handoff", hidden: true });
     const at = h("span", { class: "msg-time" });
-    // 🔊 Read this reply aloud with Pocket TTS on this Mac (renderer/speak.js).
+    // 🔊 Read this reply aloud with Kitten TTS (renderer/speak.js).
     const speak = createSpeakControls(() => ({ key: turnId, text: () => textOf(t), get node() { return el; } }));
     const el = h("div", { class: "msg msg-assistant" }, handoffEl, worked, body, note, h("div", { class: "msg-actions" }, copy, speak, at));
     dateLine();
@@ -389,7 +408,8 @@ export function createChat(workspace, opts = {}) {
     t = { turnId, parts, status, error, body, note, el, worked, handoffEl, at, startedAt: status === "streaming" ? Date.now() : null, endedAt: null };
     // The reply itself is a React island of assistant-ui elements (src/islands/message.tsx).
     t.island = mountMessage(body, {
-      approve: (callId, allow, remember) => { const part = toolPart(t, callId); if (part) void decide(t, part, allow, remember); },
+      approve: (callId, allow, remember, choice) => { const part = toolPart(t, callId); if (part) void decide(t, part, allow, remember, choice); },
+      openQuestion: (callId) => showAsk(t.turnId, toolPart(t, callId)),
       markdown: (text) => renderMarkdown(opts.chief ? text.replace(/\[\[(\d+)\]\]/g, "#$1").replace(/\[\[chat:[^\]]+\]\]/g, "a chat") : text, { root: workspace.path }),
       ...(opts.chief ? {} : { continue: () => resend("Continue from where you stopped."), retry: () => resend(userTexts.at(-1) ?? "") }),
     });
@@ -414,8 +434,8 @@ export function createChat(workspace, opts = {}) {
 
   const textOf = (t) => t.parts.filter((p) => p.kind === "text").map((p) => p.text).join("");
 
-  async function decide(t, part, allow, remember) {
-    try { await state.client.call("turn.approve", { turn_id: t.turnId, call_id: part.call_id, allow, ...(remember ? { remember } : {}) }); if (remember) branchRule = remember; }
+  async function decide(t, part, allow, remember, choice) {
+    try { await state.client.call("turn.approve", { turn_id: t.turnId, call_id: part.call_id, allow, ...(remember ? { remember } : {}), ...(choice ? { choice } : {}) }); if (remember) branchRule = remember; }
     catch (err) { toast(err.message); }
   }
 
@@ -480,7 +500,7 @@ export function createChat(workspace, opts = {}) {
         break;
       case "approval_request": {
         const p = toolPart(t, ev.call_id);
-        if (p) { p.status = "awaiting_approval"; if (ev.summary) p.summary = ev.summary; if (ev.detail) p.detail = ev.detail; if (ev.branch) p.branch = ev.branch; }
+        if (p) { p.status = "awaiting_approval"; if (ev.summary) p.summary = ev.summary; if (ev.detail) p.detail = ev.detail; if (ev.branch) p.branch = ev.branch; if (ev.choices) p.choices = ev.choices; }
         schedule(t);
         break;
       }
@@ -496,16 +516,38 @@ export function createChat(workspace, opts = {}) {
         schedule(t);
         break;
       }
+      case "question": {
+        let p = toolPart(t, ev.call_id);
+        if (!p) { p = { kind: "tool", call_id: ev.call_id, tool: ev.tool ?? "ask_user", summary: ev.summary ?? "Question", status: "awaiting_answer" }; t.parts.push(p); }
+        p.status = "awaiting_answer";
+        p.questions = ev.questions ?? [];
+        if (ev.summary) p.summary = ev.summary;
+        showAsk(ev.turn_id, p);
+        schedule(t);
+        break;
+      }
+      case "question_answered": {
+        const p = toolPart(t, ev.call_id);
+        if (p) { p.status = "running"; if (ev.skipped) p.skipped = true; else p.answers = ev.answers ?? []; }
+        if (askCard.openCall() === ev.call_id) askCard.hide();
+        askReopen.hidden = true;
+        schedule(t);
+        break;
+      }
       default:
         t.status = ev.type === "completed" ? "complete" : ev.type;
         t.error = ev.error;
-        for (const p of t.parts) if (p.kind === "tool" && (p.status === "running" || p.status === "awaiting_approval")) p.status = "error";
+        for (const p of t.parts) {
+          if (p.kind !== "tool") continue;
+          if (p.status === "awaiting_answer") { p.status = "done"; p.skipped = true; if (askCard.openCall() === p.call_id) { askCard.hide(); askReopen.hidden = true; } }
+          else if (p.status === "running" || p.status === "awaiting_approval") p.status = "error";
+        }
         t.dirty = false;
         paint(t);
         if (runningTurn === ev.turn_id) runningTurn = null;
     }
-    // Only an approval pulls you down (it needs you); other output waits behind the Latest pill.
-    if (ev.type === "approval_request") scrollDown();
+    // Only an approval or a question pulls you down (it needs you); other output waits behind the Latest pill.
+    if (ev.type === "approval_request" || ev.type === "question") scrollDown();
     else if (ev.type === "tool_start") { if (nearBottom()) scrollDown(); else jump.hidden = false; }
     syncControls();
     if (ev.type === "completed" || ev.type === "failed" || ev.type === "interrupted") { syncRing(); void refreshBranch(); }
@@ -514,6 +556,13 @@ export function createChat(workspace, opts = {}) {
 
   async function submit() {
     const typed = textarea.value.trim();
+    // A question card is open: what you type answers it (as your own answer).
+    if (typed && askCard.isOpen() && !attach.count && !opts.chief) {
+      textarea.value = "";
+      autosize();
+      askCard.typedAnswer(typed);
+      return;
+    }
     if ((!typed && !attach.count) || (runningTurn && !opts.chief)) return;
     if (attach.busy) { toast("Still adding your files…"); return; }
     const attached = attach.ready();
@@ -646,7 +695,7 @@ export function createChat(workspace, opts = {}) {
     delete composerBox.dataset.drop;
     void attach.addFiles(e.dataTransfer.files);
   });
-  send.addEventListener("click", () => (runningTurn && !(opts.chief && (textarea.value.trim() || attach.count)) ? stop() : submit()));
+  send.addEventListener("click", () => (runningTurn && !(opts.chief && (textarea.value.trim() || attach.count)) && !(askCard.isOpen() && textarea.value.trim()) ? stop() : submit()));
 
   async function loadHistory() {
     if (chatId === null) return;
@@ -665,6 +714,13 @@ export function createChat(workspace, opts = {}) {
         }
       }
       for (const t of turns.values()) paint(t);
+      // A question still waiting (the app was reopened, or the chat was switched): show its card again.
+      askCard.hide();
+      askReopen.hidden = true;
+      for (const t of [...turns.values()].reverse()) {
+        const p = t.parts.find((x) => x.kind === "tool" && x.status === "awaiting_answer" && x.questions?.length);
+        if (p) { showAsk(t.turnId, p); break; }
+      }
       setEmpty();
       syncRing();
       opts.onActivity?.(null);

@@ -45,6 +45,40 @@ export const CH = {
   BROWSER_READY: "opscode:browser-ready",
   /** invoke: a small live picture of one of this window's Browser tabs (voice mode's mini screen). */
   BROWSER_FRAME: "opscode:browser-frame",
+  /** send: main window -> main, the chat on screen ({ chat_id } or null). The notch counts it as seen. */
+  NOTCH_VIEWING: "opscode:notch-viewing",
+  /** main -> main window: open a chat or a new chat because the notch asked ({ chat_id?, workspace_id?, draft? }). */
+  NOTCH_OPEN: "opscode:notch-open",
+  MOBILE_DEVICES: "opscode:mobile-devices",
+} as const;
+
+/**
+ * The notch's own window (notch.html). Its page gets no runtime endpoint or token: main tells it what to show and
+ * does what it asks. Each channel is checked against the notch window's own webContents.
+ */
+export const NOTCH = {
+  /** send: page -> main, it listens now. */
+  READY: "opscode:notch:ready",
+  /** main -> page: the feed (sessions, pose, pulse) plus the screen's notch size. */
+  STATE: "opscode:notch:state",
+  /** send: page -> main, an action ({ type, ... }; validated in main/notch.ts). */
+  ACT: "opscode:notch:act",
+  /** send: page -> main, the pointer is over the drawn shape (true) or off it (false). */
+  OVER: "opscode:notch:over",
+  /** main -> page: the pointer left the window in one move. */
+  AWAY: "opscode:notch:away",
+  /** send: page -> main, the right-click menu. */
+  MENU: "opscode:notch:menu",
+  /** main -> page: open with the message box focused (the global shortcut). */
+  SUMMON: "opscode:notch:summon",
+  /** main -> page: a voice dictation event ({ ev, text?, full?, rms?, message? }). */
+  VOICE: "opscode:notch:voice",
+  /** main -> page: voice mode (talking with the voice agent): its events and the voice audio ({ kind: "agent" | "tts" | "on" | "off", ... }). */
+  TALK: "opscode:notch:talk",
+  /** main -> page: start talking (the voice-mode shortcut). */
+  TALK_SUMMON: "opscode:notch:talk-summon",
+  /** main -> page: a short message to show (an error from an action). */
+  TOAST: "opscode:notch:toast",
 } as const;
 
 export type ThemeSource = "system" | "light" | "dark";
@@ -57,3 +91,13 @@ export interface RuntimeInfo {
   /** The local runtime's session endpoint (ws URL + bearer token), or null if unavailable. */
   endpoint: { url: string; token: string } | null;
 }
+
+/** The overlay (overlay.html): the glow around the screen and the frame around the app while Opscode uses the Mac, and the workers' mini screens. */
+export const OVERLAY = {
+  /** send: page -> main, it listens now. */
+  READY: "opscode:overlay:ready",
+  /** main -> page: what to draw ({ working, summary, app, rect, gallery, feed }). */
+  STATE: "opscode:overlay:state",
+  /** send: page -> main ({ type: "close" } | { type: "open", chat_id }). */
+  ACT: "opscode:overlay:act",
+} as const;

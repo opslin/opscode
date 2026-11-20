@@ -2,23 +2,30 @@
 
 Opscode is the person's own app. It uses these outside works:
 
-## Read aloud: Pocket TTS (downloaded on request, not shipped inside the app)
+## Local speech
 
-- **Pocket TTS** by Kyutai (https://github.com/kyutai-labs/pocket-tts). Code: MIT. The model is distributed under Creative Commons Attribution 4.0 with Kyutai's prohibited-use terms (no voice impersonation or cloning without consent, no deception).
-- **ONNX export** by KevinAHM (https://github.com/KevinAHM/pocket-tts-onnx-export). Its README asks for **non-commercial** use.
-- **Packaging** `sherpa-onnx-pocket-tts-int8-2026-01-26` by the sherpa-onnx project (k2-fsa), downloaded once from its GitHub release when the person agrees, and checked against a pinned SHA-256. Sample voices (bria, loona) come from Kyutai's `delayed-streams-modeling` audio samples.
-- **sherpa-onnx** / `sherpa-onnx-node` (Apache-2.0, k2-fsa) runs the model on the CPU.
-
-Check these licences before distributing Opscode to others.
+- **Kitten TTS 2 Mini** by KittenML (Apache-2.0) provides multilingual speech synthesis. The app downloads the pinned ONNX weights and voice packs from https://huggingface.co/KittenML/kitten-tts-2-mini.
+- **Whisper Large-v3 Turbo** by OpenAI (MIT) provides multilingual transcription. The Q5_0 model comes from https://huggingface.co/ggerganov/whisper.cpp. The runtime uses whisper.cpp and pywhispercpp (MIT).
+- **Silero VAD** (MIT) detects speech locally via **sherpa-onnx** (Apache-2.0). The model comes from https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models.
+- **ONNX Runtime** (MIT), **Misaki** (Apache-2.0), **eSpeak NG** (GPL-3.0-or-later), **Open JTalk** (BSD-3-Clause), and **spaCy** (MIT) are bundled as separate runtime dependencies. Their distributions include their license notices.
 
 ## Other
 
 - Brand logos of Claude and Codex: see `assets/brand/engines/NOTICE.md`.
+- Logos of the MCP servers and services in the Plugins page (GitHub, Supabase, Firecrawl, TinyFish, Zoho, Hostinger and others): see `assets/brand/integrations/NOTICE.md`.
 
 
-## Speech recognition on Windows and Linux (voice input)
+## Computer use: opscode-hands (native/opscode-hands)
 
-- **Kroko streaming English speech model** (`sherpa-onnx-streaming-zipformer-en-kroko-2025-08-06`, about 57 MB): Banafo's Kroko community model, **CC-BY-SA**. Downloaded on first use from the sherpa-onnx releases on GitHub (https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models); not part of the installer. Source and license: https://huggingface.co/Banafo/Kroko-ASR
-- **Silero VAD** (`silero_vad.onnx`, 0.6 MB): voice-activity detection, MIT license (https://github.com/snakers4/silero-vad). Downloaded with the model.
-- **sherpa-onnx** (Apache-2.0, k2-fsa) runs both, and Pocket TTS, on the CPU: https://github.com/k2-fsa/sherpa-onnx
-- On a Mac, voice input uses Apple's on-device speech recognition and nothing is downloaded.
+The way opscode-hands reads apps as a numbered text map through Accessibility, finds an element again by its path, role and
+label, prefers Accessibility actions, and posts input events to one app's process (the pointer and front app stay put) is
+adapted from Atticus (https://github.com/SaarthurR/atticus-mac), MIT License, Copyright (c) 2026 SaarthurR. Atticus's Hands
+in turn adapt ideas from Plip (https://github.com/hussainn7/plip-oss, MIT) and trycua/cua-driver (https://github.com/trycua/cua,
+MIT). The code in native/opscode-hands is Opscode's own; the key-code table and per-process posting follow Atticus.
+
+MIT License: Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to
+whom the Software is furnished to do so, subject to the following conditions: The above copyright notice and this permission
+notice shall be included in all copies or substantial portions of the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT
+WARRANTY OF ANY KIND, EXPRESS OR IMPLIED.

@@ -9,7 +9,8 @@ import { state, subscribe, notify, activeWorkspace, writePref, toast, nav } from
 import { createSettingsPage, rerender as rerenderSettings, SECTIONS } from "./settings.js";
 import { createChat } from "./chat.js";
 import { createPanel, SURFACES as TOOLS } from "./panel.js";
-import { createPluginsPage, createReviewPage, createAutomationsPage } from "./pages.js";
+import { createReviewPage, createAutomationsPage } from "./pages.js";
+import { createPluginsPage } from "./plugins.js";
 import { createUsagePage, lowestLeft } from "./usage.js";
 import { createLibraryPage } from "./library.js";
 import { MODE_INFO, MODE_ORDER, modeEmblem, openModePicker } from "./conductor.js";
@@ -502,6 +503,23 @@ function render() {
 }
 subscribe(render);
 
+// The notch: tell main which chat is on screen (a finished chat there counts as seen), and open what the notch asks.
+let notchSeen;
+subscribe(() => {
+  const ws = activeWorkspace();
+  const sel = state.page === "app" && ws ? state.chatSel[ws.id] : undefined;
+  const id = typeof sel === "string" && sel !== "new" ? sel : null;
+  if (id !== notchSeen) { notchSeen = id; window.opscode?.notch?.viewing(id); }
+});
+window.opscode?.notch?.onOpen((t) => {
+  if (t?.chat_id && state.chats.some((c) => c.id === t.chat_id)) return openChat(undefined, undefined, t.chat_id);
+  if (t?.newchat || t?.workspace_id) {
+    const wid = t.workspace_id && state.workspaces?.some?.((w) => w.id === t.workspace_id) ? t.workspace_id : activeWorkspace()?.id;
+    if (wid) return openChat(wid, t.draft);
+    return newChat();
+  }
+});
+
 // ---- theme + settings -------------------------------------------------------
 function applySettings(next) {
   state.settings = next;
@@ -649,6 +667,8 @@ function setWorkspaces(next) {
   notify();
 }
 
+/** How many workspace.changed / chat.changed pushes arrived (newer than a list fetched before them). */
+const pushed = { workspaces: 0, chats: 0 };
 const endpoint = bridge?.runtime?.endpoint ?? null;
 if (endpoint) {
   let everReady = false;
@@ -660,20 +680,24 @@ if (endpoint) {
         // After a runtime restart, shells and in-flight turns are gone: reload every view.
         if (everReady) for (const v of views.values()) { v.panel?.reset(); for (const c of v.chats.values()) c.loadedOnce = false; }
         everReady = true;
+        void client.call("settings.get", {}).then(({ settings }) => applySettings(settings))
+          .catch((err) => toast(`Couldn't load settings: ${err.message}`));
         try {
           // Everything is asked at the same time. Projects and chats come first so the sidebar is there at once; the models and who is
           // signed in answer from what the runtime remembers (and are read again in the background, arriving as engines.changed / accounts.changed).
-          const [chatList, ws, settings, providers, notes, pl, mcp, computer] = await Promise.all([
-            client.call("chat.list", {}), client.call("workspace.list"), client.call("settings.get"), client.call("provider.list"),
+          // A push that arrives while these are in flight is newer than their answers: keep it (a project added during a
+          // reconnect used to vanish when the slower calls finished and the older, empty list was put back).
+          const seen = { ...pushed };
+          const [chatList, ws, providers, notes, pl, mcp, computer] = await Promise.all([
+            client.call("chat.list", {}), client.call("workspace.list"), client.call("provider.list"),
             client.call("memory.list"), client.call("plugin.list"), client.call("mcp.list"), client.call("computer.status"),
             client.call("engines.list", {}).then((r) => setEngines(r.engines, r.settings)).catch(() => {}),
             accountsUi.reloadAccounts(false),
           ]);
-          state.chats = chatList.chats;
+          if (pushed.chats === seen.chats) state.chats = chatList.chats;
           state.running = new Set(chatList.running);
           skillsFor = undefined; // refetch skills for the active project
-          setWorkspaces(ws.workspaces);
-          applySettings(settings.settings);
+          if (pushed.workspaces === seen.workspaces) setWorkspaces(ws.workspaces);
           setProviders(providers.providers);
           setNotes(notes.notes);
           setPlugins(pl.plugins, pl.marketplaces);
@@ -720,20 +744,32 @@ if (endpoint) {
   client.on("library.progress", (p) => libraryPage.progress(p));
   client.on("limits.changed", ({ limits, by_account }) => { const was = lowestLeft(state.limits); state.limitsByAccount = by_account ?? []; usagePage.changed(limits); state.limits = limits; if ((was ?? 100) >= 25 !== ((lowestLeft(limits) ?? 100) >= 25)) renderSidebar(); });
   client.on("mcp.changed", ({ servers }) => setMcp(servers));
+  client.on("mcp.oauth.done", (p) => pluginsPage.signInDone(p));
   client.on("computer.changed", ({ status }) => setComputer(status));
   client.on("tts.event", (p) => window.dispatchEvent(new CustomEvent("opscode:tts", { detail: p })));
   client.on("voice.event", (p) => window.dispatchEvent(new CustomEvent("opscode:voice", { detail: p })));
   client.on("voiceagent.event", (p) => window.dispatchEvent(new CustomEvent("opscode:voiceagent", { detail: p })));
   client.on("ios.activity", (p) => { for (const v of views.values()) v.panel?.iosActivity(p); });
   client.on("provider.changed", ({ providers }) => setProviders(providers));
-  client.on("workspace.changed", ({ workspaces }) => setWorkspaces(workspaces));
-  client.on("chat.changed", ({ chats }) => setChats(chats));
+  client.on("workspace.changed", ({ workspaces }) => { pushed.workspaces++; setWorkspaces(workspaces); });
+  client.on("chat.changed", ({ chats }) => { pushed.chats++; setChats(chats); });
   client.on("turn.event", (ev) => {
     views.get(ev.workspace_id)?.chats.get(ev.chat_id)?.onEvent(ev);
     if (chiefPage.owns(ev.chat_id)) chiefPage.onEvent(ev);
     else chiefPage.onWorkerEvent(ev);
     if (ev.type === "started") { state.running.add(ev.chat_id); notify(); }
-    else if (ev.type === "completed" || ev.type === "failed" || ev.type === "interrupted") { state.running.delete(ev.chat_id); notify(); }
+    else if (ev.type === "completed" || ev.type === "failed" || ev.type === "interrupted") { state.running.delete(ev.chat_id); state.waiting.delete(ev.chat_id); notify(); }
+    // Questions and approvals that wait for the person: the sidebar shows the chat as "Needs you". A question from a
+    // reply that ended comes after "completed" and stays until it is answered.
+    if (ev.type === "question" || ev.type === "approval_request") {
+      const open = state.waiting.get(ev.chat_id) ?? new Set();
+      open.add(ev.call_id);
+      state.waiting.set(ev.chat_id, open);
+      notify();
+    } else if (ev.type === "question_answered" || ev.type === "approval_resolved") {
+      const open = state.waiting.get(ev.chat_id);
+      if (open) { open.delete(ev.call_id); if (!open.size) state.waiting.delete(ev.chat_id); notify(); }
+    }
   });
   client.on("term.output", (p) => { for (const v of views.values()) v.panel?.termOutput(p); });
   client.on("term.exit", (p) => { for (const v of views.values()) v.panel?.termExit(p); });

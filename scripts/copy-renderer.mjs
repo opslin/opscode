@@ -27,4 +27,6 @@ mkdirSync(resolve(root, "dist/renderer/brand"), { recursive: true });
 copyFileSync(resolve(root, "assets/brand/logo/opscode-mark-128.png"), resolve(root, "dist/renderer/brand/opscode-mark-128.png"));
 // The marks of the coding agents (Claude, Codex, Antigravity, Qoder), served as dist/renderer/brand/engines/*.svg.
 cpSync(resolve(root, "assets/brand/engines"), resolve(root, "dist/renderer/brand/engines"), { recursive: true });
+// The logos of the MCP servers and services in the Plugins page, served as dist/renderer/brand/integrations/*.svg.
+cpSync(resolve(root, "assets/brand/integrations"), resolve(root, "dist/renderer/brand/integrations"), { recursive: true });
 console.log("copied brand mark");

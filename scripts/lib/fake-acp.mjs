@@ -98,13 +98,17 @@ function serve() {
         update(sid, { sessionUpdate: "tool_call_update", toolCallId: callId, title: `Run ${nm}`, kind: "other", status: allowed ? "completed" : "failed" });
       }
     }
-    const cmd = /FAKE_CMD (.+?)(?: FAKE_TOOL |$)/m.exec(text)?.[1]?.trim();
+    // FAKE_CMD_AGY <command>: the way the real Antigravity sends a command (rawInput.CommandLine, the command as the title).
+    const agy = /FAKE_CMD_AGY (.+?)(?: FAKE_TOOL |$)/m.exec(text)?.[1]?.trim();
+    const cmd = agy ?? /FAKE_CMD (.+?)(?: FAKE_TOOL |$)/m.exec(text)?.[1]?.trim();
+    const raw = agy ? { CommandLine: cmd, WaitMsBeforeAsync: 5000, toolSummary: "Check the project" } : { command: cmd };
+    const title = agy ? cmd : `Run ${cmd}`;
     const edit = /FAKE_EDIT (\S+)/.exec(text)?.[1];
     update(sid, { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "thinking" } });
     if (cmd) {
       const callId = `c-${Math.random().toString(36).slice(2, 7)}`;
-      update(sid, { sessionUpdate: "tool_call", toolCallId: callId, title: `Run ${cmd}`, kind: "execute", status: "pending", rawInput: { command: cmd } });
-      const r = await ask("session/request_permission", { sessionId: sid, toolCall: { toolCallId: callId, title: `Run ${cmd}`, kind: "execute", rawInput: { command: cmd } }, options: [{ optionId: "yes", name: "Allow", kind: "allow_once" }, { optionId: "no", name: "Reject", kind: "reject_once" }] });
+      update(sid, { sessionUpdate: "tool_call", toolCallId: callId, title, kind: "execute", status: "pending", rawInput: raw });
+      const r = await ask("session/request_permission", { sessionId: sid, toolCall: { toolCallId: callId, title, kind: "execute", rawInput: raw }, options: [{ optionId: "yes", name: "Allow", kind: "allow_once" }, { optionId: "no", name: "Reject", kind: "reject_once" }] });
       const allowed = r?.outcome?.outcome === "selected" && r.outcome.optionId === "yes";
       log({ ev: "permission", kind: "execute", allowed });
       update(sid, { sessionUpdate: "tool_call_update", toolCallId: callId, status: allowed ? "completed" : "failed", content: [{ type: "content", content: { type: "text", text: allowed ? "command output" : "rejected" } }] });
@@ -117,6 +121,9 @@ function serve() {
       log({ ev: "permission", kind: "edit", allowed });
       update(sid, { sessionUpdate: "tool_call_update", toolCallId: callId, status: allowed ? "completed" : "failed", content: [{ type: "diff", path: edit, oldText: "", newText: "hello" }] });
       update(sid, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: allowed ? "Edited." : "Not allowed." } });
+    } else if (/FAKE_ASK_BLOCK/.test(text)) {
+      // An agent without Opscode's tools asks the backup way: a "Questions:" block at the end of its reply.
+      update(sid, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "I can build it two ways.\n\nQuestions:\n1. Where should the returns section go? [Profile tab (Recommended) | Home quick actions]\n2. Which apps? [Vendor | Customer] (pick any)" } });
     } else if (/FAKE_SLOW/.test(text)) {
       for (let i = 0; i < 100 && !cancelled.has(sid); i++) { update(sid, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: `tick${i} ` } }); await sleep(100); }
       if (cancelled.has(sid)) { cancelled.delete(sid); return reply(id, { stopReason: "cancelled" }); }

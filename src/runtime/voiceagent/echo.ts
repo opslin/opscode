@@ -1,7 +1,7 @@
 // The agent's own voice can come back through the microphone. Chromium's echo canceller removes most of it; this is the
 // second line of defence: a recognised phrase that is (almost) only words the agent has just said is not the person.
 
-const words = (t: string): string[] => t.toLowerCase().replace(/[^\p{L}\p{N}\s']/gu, " ").split(/\s+/).filter(Boolean);
+const words = (t: string): string[] => t.toLowerCase().replace(/[^\p{L}\p{M}\p{N}\s']/gu, " ").split(/\s+/).filter(Boolean);
 
 /**
  * `heard` is what the recogniser reported, `spoken` the agent's latest sentences. True when at least 4 words were

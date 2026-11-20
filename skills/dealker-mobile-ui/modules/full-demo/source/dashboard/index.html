@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Velo Devices · Flutter UI Demo</title>
+  <link rel="stylesheet" href="/dashboard.css">
+  <script type="module" src="/dashboard.mjs"></script>
+</head>
+<body>
+  <header class="masthead">
+    <div><strong>Velo Devices</strong><p>Flutter UI demo</p></div>
+    <div class="head-actions"><a href="/customer/#/home" target="_blank" rel="noopener">Customer app ↗</a><a href="/vendor/#/home" target="_blank" rel="noopener">Vendor app ↗</a></div>
+  </header>
+  <main>
+    <aside class="library">
+      <nav aria-label="Demo views">
+        <button type="button" id="customer">Customer</button>
+        <button type="button" id="vendor">Vendor</button>
+        <button type="button" id="sections">Sections</button>
+        <button type="button" id="map">Module map</button>
+      </nav>
+      <label class="search"><span>Find a screen or section</span><input id="filter" type="search" placeholder="Search repair, sale, category…"></label>
+      <div id="listing"></div>
+    </aside>
+    <section id="viewer" class="viewer" aria-label="Flutter preview">
+      <div class="viewer-top"><div><h1 id="title">Customer Home</h1><code id="route">/home</code></div><a id="fullscreen" href="/customer/#/home" target="_blank" rel="noopener">Open app ↗</a></div>
+      <iframe id="frame" title="Flutter customer preview" src="/customer/#/home"></iframe>
+    </section>
+    <aside class="details" aria-label="Demo data and publication">
+      <h2>Inspect this screen</h2>
+      <dl id="metadata"></dl>
+      <section class="publication">
+        <h2>Homepage heading</h2>
+        <form id="publish">
+          <label for="heading">Published text</label>
+          <input id="heading" maxlength="100" required>
+          <button>Publish to demo</button>
+          <p id="status" role="status"></p>
+        </form>
+      </section>
+    </aside>
+  </main>
+</body>
+</html>

@@ -44,7 +44,7 @@ export function pcmFromBase64(b64: string): Int16Array {
   return out;
 }
 
-function writeWav(path: string, chunks: Int16Array[]): void {
+export function writeWav(path: string, chunks: Int16Array[]): void {
   const n = chunks.reduce((a, c) => a + c.length, 0);
   const buf = Buffer.alloc(44 + n * 2);
   buf.write("RIFF", 0); buf.writeUInt32LE(36 + n * 2, 4); buf.write("WAVE", 8); buf.write("fmt ", 12);

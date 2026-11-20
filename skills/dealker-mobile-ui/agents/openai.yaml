@@ -1,0 +1,4 @@
+interface:
+  display_name: "Dealker Mobile UI"
+  short_description: "Build Flutter customer and vendor interfaces"
+  default_prompt: "Use $dealker-mobile-ui to select the customer or vendor UI, choose the relevant screens and components, then adapt them to my product."

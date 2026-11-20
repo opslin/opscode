@@ -14,10 +14,11 @@ import { cleanEnv, ENGINE_NAMES, type EngineModel, type EngineStore } from "./de
 import type { AccountStore } from "./accounts";
 import { startAppServer } from "./codex";
 import { branchCreations, guardBranch } from "./branchGuard";
-import { classifyCommand } from "./safety";
+import { autoAsks, classifyCommand, riskOf } from "./safety";
 import { skillsNote } from "./skillsNote";
-import { CHIEF_MCP, FILE_LINK_NOTE, priorContext } from "./claude";
+import { CHIEF_MCP, FILE_LINK_NOTE, STEP_NOTE, priorContext, repoNote } from "./claude";
 import { DEVICES_MCP } from "../devices/mcp";
+import { QUESTION_BLOCK_NOTE } from "../ask";
 
 /** The voice agent's own tool a call belongs to (agents name MCP tools like `mcp_opscode_chief_work_status`), if any. */
 function chiefToolOf(tools: { def: { name: string }; describe(i: Record<string, unknown>): { summary: string } }[], u: Record<string, unknown>): (typeof tools)[number] | undefined {
@@ -79,20 +80,39 @@ export function parseSession(r: Record<string, unknown>): AcpSession {
 }
 
 /** What a permission request should do under an Opscode permission mode: allow it, refuse it, or ask the person. */
-export function permissionPolicy(mode: "read" | "supervised" | "auto_edits" | "full", kindIn: string, command: string | undefined, root: string): "allow" | "deny" | "ask" {
+export function permissionPolicy(mode: "read" | "supervised" | "auto_edits" | "auto" | "full", kindIn: string, command: string | undefined, root: string, trusted = false): "allow" | "deny" | "ask" {
   // The agent names the kind of a request itself. One that carries a command is a command, whatever it is called.
   const kind = command !== undefined ? "execute" : kindIn;
   const harmless = kind === "read" || kind === "search" || kind === "think";
   if (mode === "full") return "allow";
   if (harmless) return "allow";
   // A web fetch can send what it has read away: it goes ahead on Auto edits, asks on Supervised, and is not allowed read-only.
-  if (kind === "fetch") return mode === "auto_edits" ? "allow" : mode === "read" ? "deny" : "ask";
+  if (kind === "fetch") return mode === "auto_edits" || mode === "auto" ? "allow" : mode === "read" ? "deny" : "ask";
   if (mode === "read") return "deny";
+  if (mode === "auto") {
+    if (kind === "edit" || kind === "move") return "allow";
+    if (kind === "delete") return "ask"; // deleting files is always the person's call
+    if (kind === "execute") return command && !autoAsks(riskOf(command, root), trusted) ? "allow" : "ask";
+    return "allow";
+  }
   if (mode === "auto_edits") {
     if (kind === "edit") return "allow";
     if (kind === "execute" && command && classifyCommand(command, root) === "safe") return "allow";
   }
   return "ask";
+}
+
+/**
+ * The shell command in a tool call's input. Agents name it differently: Qoder (like Claude Code) `command`,
+ * Antigravity `CommandLine`. Without it every command would look unknown and ask, even `ls`.
+ */
+export function commandOf(raw: Record<string, unknown>): string | undefined {
+  for (const k of ["command", "CommandLine", "commandLine", "command_line", "cmd"]) {
+    const v = raw[k];
+    if (typeof v === "string" && v.trim()) return v;
+    if (Array.isArray(v) && v.length) return v.map(String).join(" ");
+  }
+  return undefined;
 }
 
 const TOOL_NAME: Record<string, string> = { execute: "run_command", edit: "write_file", delete: "write_file", move: "write_file", read: "read_file", search: "search", fetch: "web_search", think: "think", other: "tool" };
@@ -164,7 +184,7 @@ export class AcpEngine implements Engine {
       if (!id || cards.has(id)) return;
       const kind = String(u.kind ?? "other");
       const raw = rec(u.rawInput);
-      const command = typeof raw.command === "string" ? raw.command : Array.isArray(raw.command) ? (raw.command as unknown[]).map(String).join(" ") : undefined;
+      const command = commandOf(raw);
       const title = String(u.title ?? kind);
       cards.add(id);
       const own = brain ? chiefToolOf(brain.tools, u) : undefined;
@@ -213,7 +233,7 @@ export class AcpEngine implements Engine {
           const id = String(tc.toolCallId ?? `perm-${Date.now()}`);
           const kind = String(tc.kind ?? "other");
           const raw = rec(tc.rawInput);
-          const command = typeof raw.command === "string" ? raw.command : Array.isArray(raw.command) ? (raw.command as unknown[]).map(String).join(" ") : undefined;
+          const command = commandOf(raw);
           const options = (Array.isArray(p.options) ? p.options : []).map((o) => rec(o));
           const pick = (...kinds: string[]): Record<string, unknown> | undefined => { for (const k of kinds) { const o = options.find((x) => x.kind === k); if (o) return o; } return undefined; };
           const answer = (allow: boolean): unknown => {
@@ -222,7 +242,7 @@ export class AcpEngine implements Engine {
           };
           card({ ...tc, toolCallId: id, kind, title: tc.title ?? kind });
           if (command && branchCreations(command).length) { const b = await guardBranch(host, id, command); if (b) return answer(b.allow); }
-          const policy = permissionPolicy(host.mode(), kind, command, host.root);
+          const policy = permissionPolicy(host.mode(), kind, command, host.root, host.trusted?.() ?? false);
           if (policy === "allow") return answer(true);
           if (policy === "deny") { host.toolEnd(id, { output: "Not allowed in read-only mode.", is_error: true, denied: true }); ended.add(id); return answer(false); }
           return answer(await host.askApproval(id));
@@ -265,7 +285,7 @@ export class AcpEngine implements Engine {
       let lead = "";
       if (input.handoff) { lead = `${input.handoff.text}\n\n`; host.handoffSent?.("message", input.handoff.text.length); }
       else if (fresh) lead = priorContext(input.history);
-      const notes = brain ? `<instructions>\n${brain.system}\n</instructions>` : [host.memory ? `Notes the user keeps for this work (follow them as the user's own words):\n${host.memory}` : "", FILE_LINK_NOTE, host.devices && init.mcpHttp ? host.devices.note : "", skillsNote(host.skillFiles ?? [])].filter(Boolean).join("\n\n");
+      const notes = brain ? `<instructions>\n${brain.system}\n</instructions>` : [host.memory ? `Notes the user keeps for this work (follow them as the user's own words):\n${host.memory}` : "", FILE_LINK_NOTE, STEP_NOTE, repoNote(host.root), host.devices && init.mcpHttp ? host.devices.note : QUESTION_BLOCK_NOTE, skillsNote(host.skillFiles ?? [])].filter(Boolean).join("\n\n");
       const text = `${fresh && notes ? `${notes}\n\n` : ""}${lead}${input.text}`;
       const blocks: Record<string, unknown>[] = [{ type: "text", text }];
       if (init.image) {

@@ -1,16 +1,16 @@
 // The composer's mic button (V1): speak, and the words appear in the message box as you talk.
-// On-device speech recognition through the runtime (voice.* RPCs, `voice.event`): Apple's on a Mac (it listens itself);
-// elsewhere (Windows) this window captures the microphone and sends it (voice.audio). Nothing leaves the computer.
+// The window captures the microphone for local Whisper transcription through the runtime.
 //   click / ⌥Space  start or stop      Esc  cancel (puts the box back)      Enter while listening  stop and send
 //   voice note (+ menu): the same, and the recording is kept: saved in the project and attached to the message.
 
 import { h, isMicChord } from "./dom.js";
 import { icon } from "./icons.js";
 import { state, toast } from "./store.js";
+import { ensureSpeechModel } from "./speechmodel.js";
 import { startCapture, micMessage } from "./voicecapture.js";
 
 let statusP = null;
-/** Is voice input possible here (a helper, and on a Mac the macOS 26 recognizer)? Asked once. */
+/** Is voice input possible here (local runtime available)? Asked once. */
 export function voiceStatus(refresh = false) {
   if (!statusP || refresh) statusP = state.client?.call("voice.status", {}).catch(() => ({ helper: false, available: false })) ?? Promise.resolve({ helper: false, available: false });
   return statusP;
@@ -18,7 +18,7 @@ export function voiceStatus(refresh = false) {
 
 const MESSAGES = {
   mic_denied: "Opscode may not use the microphone. Allow it in System Settings → Privacy & Security → Microphone, then try again.",
-  locale: "On-device speech recognition does not support this language. Pick another one in Settings → General → Voice language.",
+  locale: "On-device speech recognition does not support this language. Pick another one in Settings → General → Voice → Microphone language.",
 };
 
 /**
@@ -28,7 +28,7 @@ const MESSAGES = {
 export function createMic(opts) {
   const { textarea } = opts;
   const lvl = h("span", { class: "mic-level", "aria-hidden": "true" });
-  const el = h("button", { class: "cmp-icon cmp-mic", type: "button", "aria-label": "Dictate (⌥Space)", title: "Dictate (⌥Space). Speech becomes text on this Mac.", dataset: { state: "idle" } }, lvl, icon("mic"));
+  const el = h("button", { class: "cmp-icon cmp-mic", type: "button", "aria-label": "Dictate (⌥Space)", title: "Dictate (⌥Space). Speech becomes text on this computer.", dataset: { state: "idle" } }, lvl, icon("mic"));
   // A voice note shows the time it has been recording next to the mic.
   const timer = h("span", { class: "mic-timer", hidden: true, "aria-live": "off" });
   let tick = null;
@@ -36,7 +36,7 @@ export function createMic(opts) {
   const clock = (since) => { const s = Math.floor((Date.now() - since) / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
   const stopClock = () => { clearInterval(tick); tick = null; timer.hidden = true; };
   let session = null;
-  let cap = null; // the window's microphone, when the window captures it (Windows)
+  let cap = null;
   let inflight = 0;
   const stopCapture = () => { try { cap?.stop(); } catch { /* gone */ } cap = null; };
   let phase = "idle"; // idle | starting | listening | finishing
@@ -49,7 +49,7 @@ export function createMic(opts) {
     el.dataset.state = p;
     el.setAttribute("aria-pressed", String(p !== "idle"));
     if (title) el.title = title;
-    else el.title = p === "idle" ? "Dictate (⌥Space). Speech becomes text on this Mac." : p === "listening" ? "Listening… click to stop (Esc cancels)" : "Working…";
+    else el.title = p === "idle" ? "Dictate (⌥Space). Speech becomes text on this computer." : p === "listening" ? "Listening… click to stop (Esc cancels)" : "Working…";
     if (p === "idle") { el.style.removeProperty("--lvl"); stopClock(); noteMode = false; }
   };
   const write = (text) => {
@@ -60,25 +60,28 @@ export function createMic(opts) {
 
   async function start(note = false) {
     if (phase !== "idle") return;
-    const st = await voiceStatus();
-    if (!st.helper || !st.available) { toast(st.helper ? (st.os === "darwin" || !st.capture || st.capture === "helper" ? "Voice input needs macOS 26 (Apple's on-device speech recognition)." : `Voice input could not start${st.error ? `: ${st.error}` : "."}`) : "Voice input is not available in this build."); return; }
     base = textarea.value && !/\s$/.test(textarea.value) ? `${textarea.value} ` : textarea.value;
     committed = "";
     sendAfter = false;
-    set("starting", "Starting the microphone…");
+    set("starting", "Getting the microphone ready…");
     noteMode = note;
     try {
+      if (!(await ensureSpeechModel()) || phase !== "starting") { if (!session) set("idle"); return; }
+      const st = await voiceStatus(true);
+      if (phase !== "starting") return;
       const r = await state.client.call("voice.start", { workspace_id: opts.workspace?.id, ...(note ? { note: true } : {}) });
       session = r.session;
+      if (phase !== "starting") { void state.client.call("voice.stop", { cancel: true }).catch(() => {}); return; }
       if (st.capture === "window") {
         // The window listens (echo cancelling and noise suppression are Chromium's) and sends 100 ms chunks.
         const mine = r.session;
         try {
-          cap = await startCapture({
+          const opened = await startCapture({
             onChunk: (pcm) => { if (session !== mine || inflight > 12) return; inflight++; state.client.call("voice.audio", { session: mine, pcm }).catch(() => {}).finally(() => { inflight--; }); },
             onLevel: () => {},
           });
-          if (session !== mine || phase === "idle") stopCapture(); // ended while the microphone was opening
+          if (session === mine && (phase === "starting" || phase === "listening")) cap = opened;
+          else opened.stop();
         } catch (e) {
           toast(micMessage(e), 8000);
           void state.client.call("voice.stop", { cancel: true }).catch(() => {});
@@ -92,6 +95,7 @@ export function createMic(opts) {
 
   function stop(send = false) {
     if (phase === "idle") return;
+    if (!session) { set("idle"); return; }
     sendAfter = send;
     stopCapture(); // no more audio; the helper finishes what it has heard
     set("finishing");
@@ -100,6 +104,7 @@ export function createMic(opts) {
 
   function cancel() {
     if (phase === "idle") return;
+    if (!session) { set("idle"); return; }
     sendAfter = false;
     stopCapture();
     void state.client.call("voice.stop", { cancel: true }).catch(() => {});

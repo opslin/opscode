@@ -4,7 +4,7 @@
 // changes Codex wants to make show as cards; approvals come back to you.
 
 import { branchCreations, guardBranch } from "./branchGuard";
-import { classifyCommand } from "./safety";
+import { autoAsks, classifyCommand, riskOf } from "./safety";
 import { skillsNote } from "./skillsNote";
 import { spawnProgram } from "../proc";
 import { relative, isAbsolute } from "node:path";
@@ -12,15 +12,23 @@ import type { PermissionMode } from "../../shared/protocol";
 import type { Engine, EngineInput, TurnHost } from "../turns";
 import { cleanEnv, type EngineStore } from "./detect";
 import type { AccountStore } from "./accounts";
-import { CHIEF_MCP, FILE_LINK_NOTE, priorContext } from "./claude";
+import { CHIEF_MCP, FILE_LINK_NOTE, STEP_NOTE, priorContext, repoNote } from "./claude";
 import { DEVICES_MCP } from "../devices/mcp";
+import { codexAnswers, normalizeQuestions } from "../ask";
 
-/** Opscode mode -> Codex sandbox + approval policy. Full access still stays inside the project (workspace-write). */
-export const CODEX_POLICY: Record<PermissionMode, { sandbox: string; approvalPolicy: string }> = {
-  read: { sandbox: "read-only", approvalPolicy: "never" },
-  supervised: { sandbox: "read-only", approvalPolicy: "untrusted" },
-  auto_edits: { sandbox: "workspace-write", approvalPolicy: "untrusted" },
-  full: { sandbox: "workspace-write", approvalPolicy: "never" },
+/**
+ * Opscode mode -> Codex sandbox + approval policy. Codex's own sandbox (workspace-write) has no network, no Docker
+ * socket and no shared memory, so builds (Gradle, pub get), server checks (curl, ssh), Docker and local databases fail
+ * and Codex gives up. In Auto and Full access Codex therefore runs commands like Claude Code does, without its sandbox:
+ * in Auto it still asks for anything outside its trusted list and Opscode answers by risk (engines/safety.ts riskOf),
+ * so deploys, pushes, deletes and database writes still come to the person.
+ */
+export const CODEX_POLICY: Record<PermissionMode, { sandbox: string; approvalPolicy: string; sandboxPolicy: Record<string, unknown> }> = {
+  read: { sandbox: "read-only", approvalPolicy: "never", sandboxPolicy: { type: "readOnly" } },
+  supervised: { sandbox: "read-only", approvalPolicy: "untrusted", sandboxPolicy: { type: "readOnly" } },
+  auto_edits: { sandbox: "workspace-write", approvalPolicy: "untrusted", sandboxPolicy: { type: "workspaceWrite" } },
+  auto: { sandbox: "danger-full-access", approvalPolicy: "untrusted", sandboxPolicy: { type: "dangerFullAccess" } },
+  full: { sandbox: "danger-full-access", approvalPolicy: "never", sandboxPolicy: { type: "dangerFullAccess" } },
 };
 const clip = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n)}…` : s);
 
@@ -30,7 +38,7 @@ const clip = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n)}
  * agent's own tools are accepted, everything else declined (the worker does the coding, not the voice agent).
  */
 const BRAIN_CONFIG = { "features.shell_tool": false, "features.image_generation": false, "features.browser_use": false, "features.computer_use": false, "features.in_app_browser": false, web_search: "disabled" };
-const BRAIN_POLICY = { sandbox: "read-only", approvalPolicy: "on-request" };
+const BRAIN_POLICY = { sandbox: "read-only", approvalPolicy: "on-request", sandboxPolicy: { type: "readOnly" } };
 
 interface Rpc {
   call(method: string, params: unknown): Promise<Record<string, unknown>>;
@@ -229,19 +237,30 @@ export class CodexEngine implements Engine {
         if (method === "item/commandExecution/requestApproval") {
           // Auto edits: reading, searching, read-only queries and local tests run without a question (engines/safety.ts).
           if (host.mode() === "auto_edits" && classifyCommand(String(p.command ?? ""), host.root) === "safe") return { decision: "accept" };
+          if (host.mode() === "auto" && !autoAsks(riskOf(String(p.command ?? ""), host.root), host.trusted?.())) return { decision: "accept" };
           const ok = await ask(String(p.itemId), { summary: `Run ${clip(String(p.command ?? ""), 80)}`, detail: String(p.command ?? "") });
           return { decision: ok ? "accept" : "decline" };
         }
         if (method === "item/fileChange/requestApproval") {
+          if (host.mode() === "auto") return { decision: "accept" };
           const ok = await ask(String(p.itemId), { summary: "Change files", detail: String(p.reason ?? "") });
           return { decision: ok ? "accept" : "decline" };
         }
         if (method === "execCommandApproval" && host.mode() === "auto_edits" && classifyCommand(([] as string[]).concat((p.command as string[]) ?? []).join(" "), host.root) === "safe") return { decision: "approved" };
+        if (method === "execCommandApproval" && host.mode() === "auto" && !autoAsks(riskOf(([] as string[]).concat((p.command as string[]) ?? []).join(" "), host.root), host.trusted?.())) return { decision: "approved" };
+        if (method === "applyPatchApproval" && host.mode() === "auto") return { decision: "approved" };
         if (method === "execCommandApproval" || method === "applyPatchApproval") {
           const ok = await ask(String(p.callId ?? p.itemId ?? `legacy-${Date.now()}`), { summary: method === "execCommandApproval" ? `Run ${clip(([] as string[]).concat((p.command as string[]) ?? []).join(" "), 80)}` : "Change files", detail: "" });
           return { decision: ok ? "approved" : "denied" };
         }
         if (method === "item/permissions/requestApproval") return { decision: "decline" };
+        if (method === "item/tool/requestUserInput") {
+          // Codex's own question tool: the same question card; no answers when nobody can answer (Codex then decides itself).
+          const questions = normalizeQuestions(p.questions);
+          const id = String(p.itemId ?? `ask-${Date.now()}`);
+          if (!questions.length || !host.askUser) return { answers: {} };
+          return codexAnswers(questions, await host.askUser(id, questions, { tool: "request_user_input" }));
+        }
         // Opscode's device tools are approved by Opscode itself (per mode, on the card), so Codex need not ask.
         if (/mcp/i.test(method) && /approval|elicitation/i.test(method) && JSON.stringify(p).includes(DEVICES_MCP)) return { decision: "accept", action: "accept" };
         throw new Error(`Opscode does not handle ${method}`);
@@ -268,7 +287,7 @@ export class CodexEngine implements Engine {
         try { thread = await rpc.call("thread/resume", { threadId: chat.engine_session, ...common }); } catch { thread = null; }
       }
       const fresh = !thread;
-      const dev = brain ? "" : [host.memory ? `Notes the user keeps for this work (follow them as the user's own words):\n${host.memory}` : "", FILE_LINK_NOTE, host.devices?.note ?? "", skillsNote(host.skillFiles ?? [])].filter(Boolean).join("\n\n");
+      const dev = brain ? "" : [host.memory ? `Notes the user keeps for this work (follow them as the user's own words):\n${host.memory}` : "", FILE_LINK_NOTE, STEP_NOTE, repoNote(host.root), host.devices?.note ?? "", skillsNote(host.skillFiles ?? [])].filter(Boolean).join("\n\n");
       if (!thread) thread = await rpc.call("thread/start", { ...common, ...(brain ? { baseInstructions: brain.system } : {}), ...(dev ? { developerInstructions: dev } : {}) });
       threadId = String((thread.thread as { id?: unknown } | undefined)?.id ?? "");
       if (!threadId) throw new Error("Codex did not start a thread");
@@ -291,7 +310,7 @@ export class CodexEngine implements Engine {
       const text = lead + input.text;
       // Reference images (brand logo, earlier assets) go in as local images, like `codex exec -i`.
       const imgs = (input.images ?? []).map((path) => ({ type: "localImage", path }));
-      const started = await rpc.call("turn/start", { threadId, input: [{ type: "text", text, text_elements: [] }, ...imgs], ...(chat.effort ? { effort: chat.effort } : {}), ...(chat.model ? { model: chat.model } : {}), approvalPolicy: policy.approvalPolicy });
+      const started = await rpc.call("turn/start", { threadId, input: [{ type: "text", text, text_elements: [] }, ...imgs], ...(chat.effort ? { effort: chat.effort } : {}), ...(chat.model ? { model: chat.model } : {}), approvalPolicy: policy.approvalPolicy, sandboxPolicy: policy.sandboxPolicy });
       turnId = String((started.turn as { id?: unknown } | undefined)?.id ?? "");
       await finished;
     } finally {
